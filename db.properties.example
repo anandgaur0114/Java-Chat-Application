@@ -1,0 +1,6 @@
+# MySQL Database Configuration Template
+# Copy this file to 'db.properties' and set your local MySQL password
+
+db.url=jdbc:mysql://localhost:3306/chatapp_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+db.user=root
+db.password=YOUR_MYSQL_PASSWORD_HERE

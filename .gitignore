@@ -1,0 +1,12 @@
+# Compiled Java class files
+*.class
+
+# Sensitive local database credentials (protects your MySQL password)
+db.properties
+
+# IDE & OS files
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
