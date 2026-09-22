@@ -17,7 +17,9 @@ import java.awt.RenderingHints;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -32,6 +34,7 @@ import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
 import javax.swing.JTextPane;
 import javax.swing.ListSelectionModel;
@@ -45,17 +48,18 @@ import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
 
 /**
- * ChatGUI provides a modern, high-DPI graphical interface for the chat application.
+ * ChatGUI provides an end-to-end messaging environment with separate dedicated 
+ * conversation windows/tabs for every peer, preventing cross-talk between group and 1-to-1 chats.
  * Demonstrates:
- *  - Modern UI design in Java Swing (CardLayout, anti-aliased custom painting)
+ *  - Per-user conversation decoupling (JTabbedPane & Detachable Windows)
+ *  - Pure Core Java Swing multithreaded architecture
  *  - Event Dispatch Thread (EDT) safety via SwingUtilities.invokeLater
- *  - StyledDocument in JTextPane for rich, multi-colored chat streams
- *  - Custom CellRenderer for real-time contact presence with status badges
- *  - Dynamic target indicator for Broadcast vs Private messaging
+ *  - Dynamic Active Contacts roster with status badges
+ *  - Anti-aliased high-DPI custom UI styling
  */
 public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
-    // Theme Color Palette (Modern Slate / Indigo)
+    // Color Theme Palette
     private static final Color COLOR_PRIMARY = new Color(79, 70, 229);       // Indigo 600
     private static final Color COLOR_PRIMARY_HOVER = new Color(67, 56, 202); // Indigo 700
     private static final Color COLOR_NAVY_BAR = new Color(15, 23, 42);       // Slate 900
@@ -72,7 +76,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     private final JPanel mainContainer = new JPanel(cardLayout);
     private final ChatClient client = new ChatClient();
 
-    // --- Login View Components ---
+    // Login View Components
     private JTextField hostField;
     private JTextField portField;
     private JTextField usernameField;
@@ -81,22 +85,23 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     private JButton loginBtn;
     private JButton registerBtn;
 
-    // --- Chat View Components ---
+    // Chat View Components
     private JLabel currentUserLabel;
     private JLabel userStatusLabel;
-    private JTextPane chatPane;
-    private StyledDocument doc;
+    private JTabbedPane tabbedPane;
     private DefaultListModel<String> userListModel;
     private JList<String> userJList;
     private JLabel targetIndicator;
-    private JPanel targetChipPanel;
     private JTextField messageInputField;
     private JButton sendBtn;
     private JButton logoutBtn;
     private JLabel contactsCountLabel;
 
     private static final String GROUP_TARGET = "Everyone (Group Broadcast)";
-    private String selectedTarget = GROUP_TARGET;
+    private String selectedTarget = null; // null = Group broadcast
+
+    // Map storing dedicated conversation data for each contact: <TargetKey, ConversationWindow>
+    private final Map<String, ConversationWindow> conversations = new LinkedHashMap<>();
 
     public ChatGUI() {
         super("Java Sockets Chat Application");
@@ -113,14 +118,11 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             }
         });
 
-        setSize(1020, 700);
-        setMinimumSize(new Dimension(800, 560));
+        setSize(1040, 720);
+        setMinimumSize(new Dimension(820, 580));
         setLocationRelativeTo(null);
     }
 
-    /**
-     * Enables system antialiasing for crisp text rendering on high-DPI monitors.
-     */
     private void initSystemRendering() {
         System.setProperty("awt.useSystemAAFontSettings", "on");
         System.setProperty("swing.aatext", "true");
@@ -137,13 +139,12 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 1. MODERN LOGIN & REGISTRATION PANEL
+    // 1. LOGIN & REGISTRATION VIEW
     // =========================================================================
     private JPanel createLoginPanel() {
         JPanel background = new JPanel(new GridBagLayout());
         background.setBackground(COLOR_BG_CANVAS);
 
-        // Floating Card with rounded shadow effect
         JPanel card = new JPanel(new GridBagLayout()) {
             @Override
             protected void paintComponent(Graphics g) {
@@ -163,14 +164,13 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         c.insets = new Insets(6, 6, 6, 6);
         c.fill = GridBagConstraints.HORIZONTAL;
 
-        // Header Title
         JLabel title = new JLabel("Java Chat Application", SwingConstants.CENTER);
         title.setFont(new Font("Segoe UI", Font.BOLD, 26));
         title.setForeground(COLOR_TEXT_MAIN);
         c.gridx = 0; c.gridy = 0; c.gridwidth = 2;
         card.add(title, c);
 
-        JLabel subtitle = new JLabel("JDK 25 • TCP Sockets • MySQL 8.0 • Swing", SwingConstants.CENTER);
+        JLabel subtitle = new JLabel("Dedicated End-to-End & Group Windows • JDK 25", SwingConstants.CENTER);
         subtitle.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         subtitle.setForeground(new Color(100, 116, 139));
         c.gridy = 1;
@@ -178,7 +178,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
         c.gridwidth = 1;
 
-        // Server Host & Port Row
         c.gridy = 2; c.gridx = 0;
         card.add(createFieldLabel("Server Host:"), c);
         hostField = createStyledTextField("localhost");
@@ -191,7 +190,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         c.gridx = 1;
         card.add(portField, c);
 
-        // Username & Password Row
         c.gridy = 4; c.gridx = 0;
         card.add(createFieldLabel("Username:"), c);
         usernameField = createStyledTextField("");
@@ -205,14 +203,12 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         c.gridx = 1;
         card.add(passwordField, c);
 
-        // Status Label
         authStatusLabel = new JLabel(" ", SwingConstants.CENTER);
         authStatusLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
         authStatusLabel.setForeground(COLOR_LOGOUT_RED);
         c.gridy = 6; c.gridx = 0; c.gridwidth = 2;
         card.add(authStatusLabel, c);
 
-        // Action Buttons
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 5));
         btnPanel.setOpaque(false);
 
@@ -303,18 +299,17 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 2. MODERN CHAT MAIN PANEL (DISCORD / SLACK INSPIRED)
+    // 2. MAIN CHAT PANEL WITH MULTI-TAB END-TO-END WINDOWS
     // =========================================================================
     private JPanel createChatPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 0));
         panel.setBackground(COLOR_BG_CANVAS);
 
-        // --- Top Bar: Premium Dark Slate Header ---
+        // --- Top Bar: Premium Dark Slate ---
         JPanel topBar = new JPanel(new BorderLayout(15, 0));
         topBar.setBackground(COLOR_NAVY_BAR);
         topBar.setBorder(new EmptyBorder(12, 20, 12, 20));
 
-        // Left: Avatar + Username + Online status
         JPanel userMetaPanel = new JPanel();
         userMetaPanel.setLayout(new BoxLayout(userMetaPanel, BoxLayout.Y_AXIS));
         userMetaPanel.setOpaque(false);
@@ -323,18 +318,18 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         currentUserLabel.setFont(new Font("Segoe UI", Font.BOLD, 17));
         currentUserLabel.setForeground(Color.WHITE);
 
-        userStatusLabel = new JLabel("● Online  •  Connected to Port 12345");
+        userStatusLabel = new JLabel("● Online  •  Port 12345");
         userStatusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        userStatusLabel.setForeground(new Color(52, 211, 153)); // Soft emerald
+        userStatusLabel.setForeground(new Color(52, 211, 153));
 
         userMetaPanel.add(currentUserLabel);
         userMetaPanel.add(Box.createVerticalStrut(2));
         userMetaPanel.add(userStatusLabel);
         topBar.add(userMetaPanel, BorderLayout.WEST);
 
-        // Right: Disconnect Button
         logoutBtn = createModernButton("Disconnect & Logout", new Color(30, 41, 59), COLOR_LOGOUT_RED, Color.WHITE, 180, 36);
         logoutBtn.addActionListener(e -> {
+            closeAllPoppedOutFrames();
             client.disconnect();
             cardLayout.show(mainContainer, VIEW_LOGIN);
             setTitle("Java Sockets Chat Application");
@@ -346,27 +341,34 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         topBar.add(logoutBtn, BorderLayout.EAST);
         panel.add(topBar, BorderLayout.NORTH);
 
-        // --- Center Area: Chat Log + Contact Roster ---
+        // --- Center Area: Tabbed Multi-Window System + Contact Sidebar ---
         JPanel centerContainer = new JPanel(new BorderLayout());
-        centerContainer.setBorder(new EmptyBorder(12, 14, 8, 14));
+        centerContainer.setBorder(new EmptyBorder(10, 14, 8, 14));
         centerContainer.setOpaque(false);
 
-        // Chat Pane
-        chatPane = new JTextPane();
-        chatPane.setEditable(false);
-        chatPane.setBackground(Color.WHITE);
-        chatPane.setFont(new Font("Segoe UI", Font.PLAIN, 16));
-        chatPane.setBorder(new EmptyBorder(10, 14, 10, 14));
-        doc = chatPane.getStyledDocument();
-        initTextStyles();
+        // Multi-Window Tabbed Pane
+        tabbedPane = new JTabbedPane();
+        tabbedPane.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        tabbedPane.setBackground(Color.WHITE);
 
-        JScrollPane chatScroll = new JScrollPane(chatPane);
-        chatScroll.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(COLOR_BORDER, 1, true),
-            BorderFactory.createEmptyBorder(2, 2, 2, 2)
-        ));
+        // Listen for tab switching to dynamically update current recipient target
+        tabbedPane.addChangeListener(e -> {
+            int selectedIdx = tabbedPane.getSelectedIndex();
+            if (selectedIdx != -1) {
+                Component comp = tabbedPane.getComponentAt(selectedIdx);
+                for (ConversationWindow win : conversations.values()) {
+                    if (win.containerPanel == comp) {
+                        selectedTarget = win.targetUser;
+                        updateTargetChip(win.targetUser == null, win.displayName);
+                        // Clear unread indicator
+                        tabbedPane.setTitleAt(selectedIdx, win.getTabTitle());
+                        break;
+                    }
+                }
+            }
+        });
 
-        // Right: Online Users Sidebar
+        // Right Contacts Sidebar
         JPanel userListContainer = new JPanel(new BorderLayout(0, 8));
         userListContainer.setOpaque(false);
 
@@ -391,16 +393,18 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         userJList.setBackground(Color.WHITE);
         userJList.setCellRenderer(new ModernContactRenderer());
 
+        // Clicking a contact in list opens/focuses their dedicated private message window!
         userJList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 String val = userJList.getSelectedValue();
                 if (val == null || val.contains(GROUP_TARGET)) {
-                    selectedTarget = GROUP_TARGET;
-                    updateTargetChip(true, "Everyone (Broadcast)");
+                    getOrCreateConversation(null, "Group Chat", true);
                 } else {
                     String cleaned = val.replace("●", "").replace("(You)", "").trim();
-                    selectedTarget = cleaned;
-                    updateTargetChip(false, cleaned);
+                    String me = client.getCurrentUsername();
+                    if (me == null || !cleaned.equalsIgnoreCase(me)) {
+                        getOrCreateConversation(cleaned, cleaned, true);
+                    }
                 }
             }
         });
@@ -410,28 +414,26 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         userScroll.setBorder(BorderFactory.createLineBorder(COLOR_BORDER, 1, true));
         userListContainer.add(userScroll, BorderLayout.CENTER);
 
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, chatScroll, userListContainer);
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tabbedPane, userListContainer);
         splitPane.setResizeWeight(0.76);
         splitPane.setBorder(null);
         splitPane.setDividerSize(8);
         centerContainer.add(splitPane, BorderLayout.CENTER);
         panel.add(centerContainer, BorderLayout.CENTER);
 
-        // --- Bottom Area: Target Pill + Input + Send Button ---
+        // --- Bottom Area: Target Indicator + Message Input + Send Button ---
         JPanel bottomContainer = new JPanel(new BorderLayout(0, 8));
         bottomContainer.setBorder(new EmptyBorder(6, 14, 14, 14));
         bottomContainer.setOpaque(false);
 
-        // Modern Target Chip
-        targetChipPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 4));
+        JPanel targetChipPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 4));
         targetChipPanel.setOpaque(false);
-        targetIndicator = new JLabel("🌐 Destination: Everyone (Group Broadcast)");
+        targetIndicator = new JLabel("🌐 Active Window: Everyone (Group Broadcast)");
         targetIndicator.setFont(new Font("Segoe UI", Font.BOLD, 13));
         targetIndicator.setForeground(COLOR_PRIMARY);
         targetChipPanel.add(targetIndicator);
         bottomContainer.add(targetChipPanel, BorderLayout.NORTH);
 
-        // Input Row
         JPanel inputRow = new JPanel(new BorderLayout(10, 0));
         inputRow.setOpaque(false);
 
@@ -457,44 +459,174 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
     private void updateTargetChip(boolean isBroadcast, String name) {
         if (isBroadcast) {
-            targetIndicator.setText("🌐 Destination: Everyone (Group Broadcast)");
+            targetIndicator.setText("🌐 Active Window: Everyone (Group Broadcast)");
             targetIndicator.setForeground(COLOR_PRIMARY);
         } else {
-            targetIndicator.setText("🔒 Private Message to: " + name);
+            targetIndicator.setText("🔒 Private End-to-End Window with: " + name);
             targetIndicator.setForeground(new Color(147, 51, 234)); // Purple 600
         }
     }
 
-    /**
-     * Custom List Cell Renderer with rounded pill selection and status badges.
-     */
-    private static class ModernContactRenderer extends DefaultListCellRenderer {
-        @Override
-        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
-            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-            label.setBorder(new EmptyBorder(8, 12, 8, 12));
-            label.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+    // =========================================================================
+    // 3. CONVERSATION WINDOW DATA STRUCTURE & FACTORY
+    // =========================================================================
+    private class ConversationWindow {
+        final String targetUser; // null for group broadcast
+        final String displayName;
+        final JPanel containerPanel;
+        final JTextPane textPane;
+        final StyledDocument doc;
+        final JScrollPane scrollPane;
+        JFrame popOutFrame; // Standalone floating desktop window if popped out
+        boolean isPoppedOut = false;
 
-            String text = String.valueOf(value);
-            if (isSelected) {
-                label.setBackground(new Color(238, 242, 255)); // Soft indigo highlight
-                label.setForeground(new Color(49, 46, 129));
-            } else {
-                label.setBackground(Color.WHITE);
-                label.setForeground(COLOR_TEXT_MAIN);
-            }
+        ConversationWindow(String targetUser, String displayName) {
+            this.targetUser = targetUser;
+            this.displayName = displayName;
 
-            if (text.contains(GROUP_TARGET)) {
-                label.setText("🌐  " + text);
-                label.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            } else {
-                label.setText("●  " + text);
-            }
-            return label;
+            containerPanel = new JPanel(new BorderLayout(0, 0));
+            containerPanel.setBackground(Color.WHITE);
+
+            // Sub-header with "Pop Out Window" control
+            JPanel subHeader = new JPanel(new BorderLayout());
+            subHeader.setBackground(new Color(248, 250, 252));
+            subHeader.setBorder(new EmptyBorder(6, 12, 6, 12));
+
+            String headerLabelText = (targetUser == null) 
+                ? "🌐 Group Broadcast Channel (All Users)"
+                : "🔒 End-to-End Private Channel: " + displayName;
+            JLabel channelLabel = new JLabel(headerLabelText);
+            channelLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            channelLabel.setForeground(COLOR_TEXT_MAIN);
+            subHeader.add(channelLabel, BorderLayout.WEST);
+
+            // Button to detach conversation into a separate floating desktop window!
+            JButton popOutBtn = createModernButton("⧉ Pop Out Window", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 150, 28);
+            popOutBtn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+            popOutBtn.addActionListener(e -> togglePopOut(this));
+            subHeader.add(popOutBtn, BorderLayout.EAST);
+
+            containerPanel.add(subHeader, BorderLayout.NORTH);
+
+            // Text pane
+            textPane = new JTextPane();
+            textPane.setEditable(false);
+            textPane.setBackground(Color.WHITE);
+            textPane.setFont(new Font("Segoe UI", Font.PLAIN, 16));
+            textPane.setBorder(new EmptyBorder(10, 14, 10, 14));
+            doc = textPane.getStyledDocument();
+            initDocumentStyles(doc);
+
+            scrollPane = new JScrollPane(textPane);
+            scrollPane.setBorder(BorderFactory.createLineBorder(COLOR_BORDER, 1));
+            containerPanel.add(scrollPane, BorderLayout.CENTER);
+        }
+
+        String getTabTitle() {
+            return (targetUser == null) ? "🌐 Group Chat" : "🔒 " + displayName;
         }
     }
 
-    private void initTextStyles() {
+    /**
+     * Retrieves an existing conversation window or creates a dedicated new one.
+     */
+    private synchronized ConversationWindow getOrCreateConversation(String targetUser, String displayName, boolean select) {
+        String key = (targetUser == null) ? "GLOBAL" : targetUser.toLowerCase();
+        ConversationWindow win = conversations.get(key);
+
+        if (win == null) {
+            win = new ConversationWindow(targetUser, displayName);
+            conversations.put(key, win);
+            tabbedPane.addTab(win.getTabTitle(), win.containerPanel);
+        }
+
+        if (select && !win.isPoppedOut) {
+            tabbedPane.setSelectedComponent(win.containerPanel);
+            selectedTarget = win.targetUser;
+            updateTargetChip(win.targetUser == null, win.displayName);
+        } else if (win.isPoppedOut && win.popOutFrame != null) {
+            win.popOutFrame.toFront();
+            win.popOutFrame.requestFocus();
+        }
+
+        return win;
+    }
+
+    /**
+     * Detaches conversation into a standalone desktop window, or re-docks it into the tab pane.
+     */
+    private void togglePopOut(ConversationWindow win) {
+        if (!win.isPoppedOut) {
+            // Remove from tabs and put in separate desktop window
+            tabbedPane.remove(win.containerPanel);
+            win.isPoppedOut = true;
+
+            JFrame frame = new JFrame("Private Chat - " + win.displayName);
+            frame.setSize(600, 520);
+            frame.setLocationRelativeTo(this);
+            frame.setLayout(new BorderLayout());
+
+            // Add dedicated message input inside the popped out window too!
+            JPanel popBottom = new JPanel(new BorderLayout(8, 0));
+            popBottom.setBorder(new EmptyBorder(8, 10, 10, 10));
+            JTextField popInput = new JTextField();
+            popInput.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+            popInput.setPreferredSize(new Dimension(200, 38));
+
+            JButton popSend = createModernButton("Send", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 80, 38);
+            Runnable sendAction = () -> {
+                String text = popInput.getText().trim();
+                if (!text.isEmpty()) {
+                    if (win.targetUser == null) {
+                        client.sendBroadcast(text);
+                    } else {
+                        client.sendPrivate(win.targetUser, text);
+                    }
+                    popInput.setText("");
+                }
+            };
+            popInput.addActionListener(e -> sendAction.run());
+            popSend.addActionListener(e -> sendAction.run());
+
+            popBottom.add(popInput, BorderLayout.CENTER);
+            popBottom.add(popSend, BorderLayout.EAST);
+
+            frame.add(win.containerPanel, BorderLayout.CENTER);
+            frame.add(popBottom, BorderLayout.SOUTH);
+
+            frame.addWindowListener(new WindowAdapter() {
+                @Override
+                public void windowClosing(WindowEvent e) {
+                    // Re-dock back into main tab pane
+                    frame.dispose();
+                    win.isPoppedOut = false;
+                    tabbedPane.addTab(win.getTabTitle(), win.containerPanel);
+                    tabbedPane.setSelectedComponent(win.containerPanel);
+                }
+            });
+
+            win.popOutFrame = frame;
+            frame.setVisible(true);
+        } else {
+            // Re-dock
+            if (win.popOutFrame != null) {
+                win.popOutFrame.dispose();
+            }
+            win.isPoppedOut = false;
+            tabbedPane.addTab(win.getTabTitle(), win.containerPanel);
+            tabbedPane.setSelectedComponent(win.containerPanel);
+        }
+    }
+
+    private void closeAllPoppedOutFrames() {
+        for (ConversationWindow win : conversations.values()) {
+            if (win.isPoppedOut && win.popOutFrame != null) {
+                win.popOutFrame.dispose();
+            }
+        }
+    }
+
+    private void initDocumentStyles(StyledDocument doc) {
         Style defaultStyle = doc.addStyle("default", null);
         StyleConstants.setFontFamily(defaultStyle, "Segoe UI");
         StyleConstants.setFontSize(defaultStyle, 16);
@@ -530,10 +662,10 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         StyleConstants.setForeground(historyStyle, new Color(217, 119, 6)); // Amber 600
     }
 
-    private void appendStyledMessage(String styleName, String text) {
+    private void appendStyledMessage(ConversationWindow win, String styleName, String text) {
         try {
-            doc.insertString(doc.getLength(), text, doc.getStyle(styleName));
-            chatPane.setCaretPosition(doc.getLength());
+            win.doc.insertString(win.doc.getLength(), text, win.doc.getStyle(styleName));
+            win.textPane.setCaretPosition(win.doc.getLength());
         } catch (BadLocationException e) {
             e.printStackTrace();
         }
@@ -560,15 +692,39 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             JOptionPane.YES_NO_OPTION
         );
         if (confirm == JOptionPane.YES_OPTION) {
+            closeAllPoppedOutFrames();
             client.disconnect();
             dispose();
             System.exit(0);
         }
     }
 
-    /**
-     * Helper to create anti-aliased modern rounded buttons without external dependencies.
-     */
+    private static class ModernContactRenderer extends DefaultListCellRenderer {
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            label.setBorder(new EmptyBorder(8, 12, 8, 12));
+            label.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+
+            String text = String.valueOf(value);
+            if (isSelected) {
+                label.setBackground(new Color(238, 242, 255));
+                label.setForeground(new Color(49, 46, 129));
+            } else {
+                label.setBackground(Color.WHITE);
+                label.setForeground(COLOR_TEXT_MAIN);
+            }
+
+            if (text.contains(GROUP_TARGET)) {
+                label.setText("🌐  " + text);
+                label.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            } else {
+                label.setText("●  " + text);
+            }
+            return label;
+        }
+    }
+
     public static JButton createModernButton(String text, Color bgColor, Color hoverColor, Color fgColor, int width, int height) {
         JButton btn = new JButton(text) {
             @Override
@@ -598,21 +754,26 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 3. CHAT EVENT LISTENER CALLBACKS (Swing EDT Safe)
+    // 4. CHAT EVENT LISTENER IMPLEMENTATION (Swing EDT Safe)
     // =========================================================================
 
     @Override
     public void onLoginSuccess(String username) {
         SwingUtilities.invokeLater(() -> {
             currentUserLabel.setText(username);
-            userStatusLabel.setText("● Active Now  •  Connected to Port 12345");
-            setTitle("Java Sockets Chat Room - " + username);
+            userStatusLabel.setText("● Active Now  •  Port 12345");
+            setTitle("Java Sockets Chat - " + username);
             authStatusLabel.setText("");
             loginBtn.setEnabled(true);
             registerBtn.setEnabled(true);
 
-            chatPane.setText("");
-            appendStyledMessage("system", "=== Connected to Central Server ===\n");
+            // Clear old conversations and setup initial Group Broadcast Tab
+            closeAllPoppedOutFrames();
+            conversations.clear();
+            tabbedPane.removeAll();
+
+            ConversationWindow global = getOrCreateConversation(null, "Group Chat", true);
+            appendStyledMessage(global, "system", "=== Connected to Central Server ===\n");
 
             cardLayout.show(mainContainer, VIEW_CHAT);
             messageInputField.requestFocusInWindow();
@@ -653,35 +814,47 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     @Override
     public void onBroadcastReceived(String timestamp, String sender, String message) {
         SwingUtilities.invokeLater(() -> {
-            appendStyledMessage("time", "[" + timestamp + "] ");
-            appendStyledMessage("groupSender", sender + ": ");
-            appendStyledMessage("default", message + "\n");
+            ConversationWindow global = getOrCreateConversation(null, "Group Chat", false);
+            appendStyledMessage(global, "time", "[" + timestamp + "] ");
+            appendStyledMessage(global, "groupSender", sender + ": ");
+            appendStyledMessage(global, "default", message + "\n");
         });
     }
 
     @Override
     public void onPrivateReceived(String timestamp, String sender, String message) {
         SwingUtilities.invokeLater(() -> {
-            appendStyledMessage("time", "[" + timestamp + "] ");
-            appendStyledMessage("privateSender", "[Private from " + sender + "]: ");
-            appendStyledMessage("default", message + "\n");
+            // Message routes ONLY to the dedicated sender's window!
+            ConversationWindow win = getOrCreateConversation(sender, sender, false);
+            appendStyledMessage(win, "time", "[" + timestamp + "] ");
+            appendStyledMessage(win, "privateSender", sender + ": ");
+            appendStyledMessage(win, "default", message + "\n");
+
+            // Highlight tab with unread indicator if not currently selected
+            int idx = tabbedPane.indexOfComponent(win.containerPanel);
+            if (idx != -1 && tabbedPane.getSelectedIndex() != idx) {
+                tabbedPane.setTitleAt(idx, "🔒 " + sender + " (●)");
+            }
         });
     }
 
     @Override
     public void onPrivateSent(String timestamp, String recipient, String message) {
         SwingUtilities.invokeLater(() -> {
-            appendStyledMessage("time", "[" + timestamp + "] ");
-            appendStyledMessage("privateSentSender", "[Private to " + recipient + "]: ");
-            appendStyledMessage("default", message + "\n");
+            // Echo routes ONLY to the dedicated recipient's window!
+            ConversationWindow win = getOrCreateConversation(recipient, recipient, false);
+            appendStyledMessage(win, "time", "[" + timestamp + "] ");
+            appendStyledMessage(win, "privateSentSender", "You: ");
+            appendStyledMessage(win, "default", message + "\n");
         });
     }
 
     @Override
     public void onSystemMessage(String timestamp, String message) {
         SwingUtilities.invokeLater(() -> {
-            appendStyledMessage("time", "[" + timestamp + "] ");
-            appendStyledMessage("system", "— " + message + " —\n");
+            ConversationWindow global = getOrCreateConversation(null, "Group Chat", false);
+            appendStyledMessage(global, "time", "[" + timestamp + "] ");
+            appendStyledMessage(global, "system", "— " + message + " —\n");
         });
     }
 
@@ -707,8 +880,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
             if (currentSelection != null && userListModel.contains(currentSelection)) {
                 userJList.setSelectedValue(currentSelection, true);
-            } else {
-                userJList.setSelectedIndex(0);
             }
         });
     }
@@ -716,26 +887,42 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     @Override
     public void onHistoryMessage(String timestamp, String sender, String receiver, String message) {
         SwingUtilities.invokeLater(() -> {
-            appendStyledMessage("time", "[" + timestamp + "] ");
             if ("ALL".equalsIgnoreCase(receiver)) {
-                appendStyledMessage("groupSender", "[History] " + sender + ": ");
+                // Group broadcast history goes exclusively into Group Chat tab
+                ConversationWindow global = getOrCreateConversation(null, "Group Chat", false);
+                appendStyledMessage(global, "time", "[" + timestamp + "] ");
+                appendStyledMessage(global, "groupSender", "[History] " + sender + ": ");
+                appendStyledMessage(global, "default", message + "\n");
             } else {
-                appendStyledMessage("privateSender", "[History " + sender + " → " + receiver + "]: ");
+                // Private message history routes exclusively into the corresponding peer's window!
+                String me = client.getCurrentUsername();
+                String peer = (me != null && sender.equalsIgnoreCase(me)) ? receiver : sender;
+
+                ConversationWindow win = getOrCreateConversation(peer, peer, false);
+                appendStyledMessage(win, "time", "[" + timestamp + "] ");
+                if (me != null && sender.equalsIgnoreCase(me)) {
+                    appendStyledMessage(win, "privateSentSender", "[History] You: ");
+                } else {
+                    appendStyledMessage(win, "privateSender", "[History] " + sender + ": ");
+                }
+                appendStyledMessage(win, "default", message + "\n");
             }
-            appendStyledMessage("default", message + "\n");
         });
     }
 
     @Override
     public void onHistoryDone() {
         SwingUtilities.invokeLater(() -> {
-            appendStyledMessage("history", "──────── Historical Messages Restored ────────\n");
+            for (ConversationWindow win : conversations.values()) {
+                appendStyledMessage(win, "history", "──────── Historical Messages Restored ────────\n");
+            }
         });
     }
 
     @Override
     public void onDisconnected(String reason) {
         SwingUtilities.invokeLater(() -> {
+            closeAllPoppedOutFrames();
             cardLayout.show(mainContainer, VIEW_LOGIN);
             authStatusLabel.setForeground(COLOR_LOGOUT_RED);
             authStatusLabel.setText(reason);
