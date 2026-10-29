@@ -14,9 +14,9 @@ import java.util.concurrent.Executors;
  * for JECRC StaffNet (College Staff Information & Circular Distribution System).
  * Demonstrates:
  *  - java.net.ServerSocket listening on TCP port
- *  - java.util.concurrent.ExecutorService thread pooling
- *  - java.util.concurrent.ConcurrentHashMap for thread-safe active staff tracking
- *  - Institutional circular routing (Broadcast Notice Board and 1-to-1 Staff Memos)
+ *  - Authority enforcement (Main Notice Board restricted to Principal & HODs)
+ *  - Department-isolated Notice Board broadcasting
+ *  - 1-to-1 Confidential Faculty Memos
  *  - Academic file and document transfer dispatching
  */
 public class ChatServer {
@@ -51,9 +51,8 @@ public class ChatServer {
         // 2. Start TCP ServerSocket
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             System.out.println("[Server] Campus Intranet Socket listening on TCP Port: " + PORT);
-            System.out.println("[Server] Ready to dispatch faculty notices and confidential memos...\n");
+            System.out.println("[Server] Ready to dispatch departmental and campus circulars...\n");
 
-            // Server loop: continuously accepts incoming connections from staff clients
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 System.out.println("[Server] Incoming staff connection from: " + clientSocket.getRemoteSocketAddress());
@@ -69,51 +68,84 @@ public class ChatServer {
         }
     }
 
-    /**
-     * Checks if a staff user is currently logged in.
-     */
     public static boolean isUserOnline(String username) {
         return onlineClients.containsKey(username.toLowerCase());
     }
 
-    /**
-     * Registers an authenticated staff member into active intranet sessions.
-     */
     public static synchronized void registerClient(String username, ClientHandler handler) {
         onlineClients.put(username.toLowerCase(), handler);
         System.out.println("[Server] Staff member logged in: " + username + " [" + handler.getDesignation() + ", " + handler.getDepartment() + "] (Online staff: " + onlineClients.size() + ")");
 
         broadcastUserList();
-        broadcastSystemMessage("Staff member '" + username + "' (" + handler.getDesignation() + ") is now online on StaffNet.");
+        broadcastSystemMessage("Staff member '" + username + "' (" + handler.getDesignation() + " - " + handler.getDepartment() + ") is now online.");
     }
 
-    /**
-     * Unregisters a staff member on disconnect or logout.
-     */
     public static synchronized void unregisterClient(String username) {
         if (username != null) {
             ClientHandler removed = onlineClients.remove(username.toLowerCase());
             if (removed != null) {
                 System.out.println("[Server] Staff member logged out: " + username + " (Online staff: " + onlineClients.size() + ")");
                 broadcastUserList();
-                broadcastSystemMessage("Staff member '" + username + "' has signed off from StaffNet.");
+                broadcastSystemMessage("Staff member '" + username + "' has signed off.");
             }
         }
     }
 
     /**
-     * Broadcasts an official circular or notice to all online staff and saves it in MySQL.
+     * Broadcasts a notice to the MAIN Campus Notice Board (posted by Principal or HOD).
+     * Saved in MySQL as receiver = 'MAIN', dispatched to ALL online staff across all departments.
      */
-    public static void broadcastMessage(String sender, String message) {
+    public static void broadcastMainMessage(String sender, String message) {
         String timestamp = LocalTime.now().format(TIME_FORMATTER);
+        DBHandler.saveMessage(sender, "MAIN", message);
 
-        // 1. Persist in MySQL database (receiver = 'ALL')
-        DBHandler.saveMessage(sender, "ALL", message);
-
-        // 2. Send over socket to all active staff clients
-        String protocolMsg = "MSG|" + timestamp + "|" + sender + "|" + message;
+        String protocolMsg = "MSG_MAIN|" + timestamp + "|" + sender + "|" + message;
         for (ClientHandler client : onlineClients.values()) {
             client.sendMessage(protocolMsg);
+        }
+    }
+
+    /**
+     * Broadcasts a notice to a specific DEPARTMENT Notice Board.
+     * Saved in MySQL as receiver = 'DEPT:<department>', dispatched ONLY to faculty of that department.
+     */
+    public static void broadcastDeptMessage(String sender, String department, String message) {
+        String timestamp = LocalTime.now().format(TIME_FORMATTER);
+        DBHandler.saveMessage(sender, "DEPT:" + department, message);
+
+        String protocolMsg = "MSG_DEPT|" + timestamp + "|" + sender + "|" + department + "|" + message;
+        for (ClientHandler client : onlineClients.values()) {
+            if (client.getDepartment().equalsIgnoreCase(department)) {
+                client.sendMessage(protocolMsg);
+            }
+        }
+    }
+
+    /**
+     * Broadcasts an official document attachment on the MAIN Notice Board.
+     */
+    public static void broadcastMainFile(String sender, String fileName, String base64Data) {
+        String timestamp = LocalTime.now().format(TIME_FORMATTER);
+        DBHandler.saveMessage(sender, "MAIN", "[FILE_ATTACHMENT: " + fileName + "]");
+
+        String protocolMsg = "FILE_MSG_MAIN|" + timestamp + "|" + sender + "|" + fileName + "|" + base64Data;
+        for (ClientHandler client : onlineClients.values()) {
+            client.sendMessage(protocolMsg);
+        }
+    }
+
+    /**
+     * Broadcasts an academic document attachment to a specific DEPARTMENT Notice Board.
+     */
+    public static void broadcastDeptFile(String sender, String department, String fileName, String base64Data) {
+        String timestamp = LocalTime.now().format(TIME_FORMATTER);
+        DBHandler.saveMessage(sender, "DEPT:" + department, "[FILE_ATTACHMENT: " + fileName + "]");
+
+        String protocolMsg = "FILE_MSG_DEPT|" + timestamp + "|" + sender + "|" + department + "|" + fileName + "|" + base64Data;
+        for (ClientHandler client : onlineClients.values()) {
+            if (client.getDepartment().equalsIgnoreCase(department)) {
+                client.sendMessage(protocolMsg);
+            }
         }
     }
 
@@ -122,11 +154,8 @@ public class ChatServer {
      */
     public static boolean sendPrivateMessage(String sender, String receiver, String message) {
         String timestamp = LocalTime.now().format(TIME_FORMATTER);
-
-        // 1. Persist in MySQL database
         DBHandler.saveMessage(sender, receiver, message);
 
-        // 2. Locate recipient in online staff registry
         ClientHandler recipientHandler = onlineClients.get(receiver.toLowerCase());
         boolean isRecipientOnline = (recipientHandler != null);
 
@@ -134,7 +163,6 @@ public class ChatServer {
             recipientHandler.sendMessage("PRIV_MSG|" + timestamp + "|" + sender + "|" + message);
         }
 
-        // Echo back to sender for confirmation
         ClientHandler senderHandler = onlineClients.get(sender.toLowerCase());
         if (senderHandler != null) {
             senderHandler.sendMessage("PRIV_SENT|" + timestamp + "|" + receiver + "|" + message);
@@ -144,19 +172,6 @@ public class ChatServer {
         }
 
         return isRecipientOnline;
-    }
-
-    /**
-     * Broadcasts an official document attachment (PDF, PPT, Word) to all staff.
-     */
-    public static void broadcastFile(String sender, String fileName, String base64Data) {
-        String timestamp = LocalTime.now().format(TIME_FORMATTER);
-        DBHandler.saveMessage(sender, "ALL", "[FILE_ATTACHMENT: " + fileName + "]");
-
-        String protocolMsg = "FILE_MSG|" + timestamp + "|" + sender + "|" + fileName + "|" + base64Data;
-        for (ClientHandler client : onlineClients.values()) {
-            client.sendMessage(protocolMsg);
-        }
     }
 
     /**
@@ -184,9 +199,6 @@ public class ChatServer {
         return isRecipientOnline;
     }
 
-    /**
-     * Broadcasts the current directory of active online staff members with departments and designations.
-     */
     public static void broadcastUserList() {
         StringBuilder sb = new StringBuilder("USER_LIST|");
         boolean first = true;
@@ -207,9 +219,6 @@ public class ChatServer {
         }
     }
 
-    /**
-     * Broadcasts an institutional server-level notification to all clients.
-     */
     public static void broadcastSystemMessage(String text) {
         String timestamp = LocalTime.now().format(TIME_FORMATTER);
         String msg = "SYS_MSG|" + timestamp + "|" + text;

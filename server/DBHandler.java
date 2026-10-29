@@ -20,11 +20,10 @@ import java.util.Properties;
  * for the JECRC College Staff Information & Circular Distribution System.
  * Demonstrates:
  *  - External configuration via Properties file with sensible defaults
- *  - Staff Profile schema migration (Department, Designation, Roles)
- *  - Pre-seeding institutional staff accounts and official circular notices
+ *  - Department & Authority aware schema (Principal, HOD, Faculty)
+ *  - Partitioned message retrieval: Main Notice Board vs Department Notice Board vs Private Memos
  *  - PreparedStatements to prevent SQL Injection
  *  - SHA-256 Hashing for secure password storage
- *  - Query execution, transactions, and ResultSet processing
  */
 public class DBHandler {
 
@@ -33,12 +32,8 @@ public class DBHandler {
     private static String dbUser = "root";
     private static String dbPassword = "root";
 
-    // Static initializer: load driver, optional db.properties, and initialize schema
     static {
-        // 1. Load configuration from db.properties if present
         loadConfig();
-
-        // 2. Load MySQL Connector/J driver
         try {
             Class.forName("com.mysql.cj.jdbc.Driver");
         } catch (ClassNotFoundException e) {
@@ -47,10 +42,6 @@ public class DBHandler {
         }
     }
 
-    /**
-     * Attempts to load DB credentials from 'db.properties'.
-     * Falls back to defaults (root/root) if file is missing.
-     */
     private static void loadConfig() {
         File propFile = new File("db.properties");
         if (propFile.exists()) {
@@ -67,30 +58,33 @@ public class DBHandler {
         }
     }
 
-    /**
-     * Establishes and returns a new database Connection.
-     */
     public static Connection getConnection() throws SQLException {
         return DriverManager.getConnection(dbUrl, dbUser, dbPassword);
     }
 
-    /**
-     * Tests the database connection and prints diagnostic information.
-     */
     public static boolean testConnection() {
         try (Connection conn = getConnection()) {
             return conn != null && !conn.isClosed();
         } catch (SQLException e) {
             System.err.println("[DBHandler] Connection failed: " + e.getMessage());
             System.err.println("[DBHandler] Check URL: " + dbUrl + " | User: " + dbUser);
-            System.err.println("[DBHandler] You can configure credentials in db.properties.");
             return false;
         }
     }
 
     /**
-     * Auto-migrates schema to ensure staff columns exist (Department, Designation, Role)
-     * and seeds default faculty accounts and official notices.
+     * Checks if a staff member has administrative authority (Principal or HOD)
+     * permitted to post broadcast announcements on the Main Campus Notice Board.
+     */
+    public static boolean isAuthority(String designation) {
+        if (designation == null) return false;
+        String d = designation.trim().toLowerCase();
+        return d.contains("principal") || d.contains("hod") || d.contains("head of department");
+    }
+
+    /**
+     * Auto-migrates schema to ensure staff columns and partitioned receivers exist,
+     * and seeds institutional staff accounts.
      */
     public static void initializeStaffSystem() {
         try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
@@ -100,7 +94,7 @@ public class DBHandler {
                 "id INT AUTO_INCREMENT PRIMARY KEY, " +
                 "username VARCHAR(50) NOT NULL UNIQUE, " +
                 "password_hash VARCHAR(255) NOT NULL, " +
-                "department VARCHAR(100) DEFAULT 'Computer Science & Engineering', " +
+                "department VARCHAR(100) DEFAULT 'Computer Science & AI', " +
                 "designation VARCHAR(100) DEFAULT 'Assistant Professor', " +
                 "role VARCHAR(30) DEFAULT 'FACULTY', " +
                 "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
@@ -110,7 +104,7 @@ public class DBHandler {
                 "CREATE TABLE IF NOT EXISTS messages (" +
                 "id INT AUTO_INCREMENT PRIMARY KEY, " +
                 "sender VARCHAR(50) NOT NULL, " +
-                "receiver VARCHAR(50) NOT NULL, " +
+                "receiver VARCHAR(100) NOT NULL, " +
                 "message TEXT NOT NULL, " +
                 "timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                 "INDEX idx_sender (sender), " +
@@ -118,47 +112,56 @@ public class DBHandler {
                 "INDEX idx_timestamp (timestamp))"
             );
 
-            // 2. Safe alteration in case table existed previously without extra columns
+            // Safe column alterations
             try { stmt.executeUpdate("ALTER TABLE users ADD COLUMN department VARCHAR(100) DEFAULT 'Computer Science & AI'"); } catch (SQLException ignored) {}
             try { stmt.executeUpdate("ALTER TABLE users ADD COLUMN designation VARCHAR(100) DEFAULT 'Assistant Professor'"); } catch (SQLException ignored) {}
             try { stmt.executeUpdate("ALTER TABLE users ADD COLUMN role VARCHAR(30) DEFAULT 'FACULTY'"); } catch (SQLException ignored) {}
+            try { stmt.executeUpdate("ALTER TABLE messages MODIFY receiver VARCHAR(100) NOT NULL"); } catch (SQLException ignored) {}
 
-            // 3. Pre-seed default faculty & staff accounts (password: admin123)
+            // 2. Pre-seed default faculty & staff accounts (password: admin123)
             String defaultPassHash = hashPassword("admin123");
             String seedUsersSql = 
                 "INSERT IGNORE INTO users (username, password_hash, department, designation, role) VALUES " +
-                "('mona.nagar', '" + defaultPassHash + "', 'Computer Science & AI', 'Assistant Professor & Guide', 'HOD')," +
-                "('abhinav.batra', '" + defaultPassHash + "', 'Computer Science & AI', 'Assistant Professor & Exam Cell', 'FACULTY')," +
+                "('principal', '" + defaultPassHash + "', 'Administration', 'Principal', 'ADMIN')," +
+                "('mona.nagar', '" + defaultPassHash + "', 'Computer Science & AI', 'Head of Department (HOD)', 'HOD')," +
                 "('anand.gaur', '" + defaultPassHash + "', 'AI & Data Science', 'Head of Department (HOD)', 'HOD')," +
-                "('amit.kumar', '" + defaultPassHash + "', 'AI & Computing Labs', 'Senior Lab Incharge', 'STAFF')," +
-                "('abhishek.sihag', '" + defaultPassHash + "', 'Examination Cell', 'Academic Controller', 'ADMIN')," +
-                "('principal.office', '" + defaultPassHash + "', 'Principal Secretariat', 'Executive Administrator', 'ADMIN')";
+                "('abhinav.batra', '" + defaultPassHash + "', 'Computer Science & AI', 'Assistant Professor', 'FACULTY')," +
+                "('amit.kumar', '" + defaultPassHash + "', 'Information Technology', 'Assistant Professor', 'FACULTY')," +
+                "('abhishek.sihag', '" + defaultPassHash + "', 'Examination Cell', 'Exam Cell Coordinator', 'ADMIN')";
             try {
                 stmt.executeUpdate(seedUsersSql);
             } catch (SQLException ignored) {}
 
-            // 4. Seed initial official circulars if messages table is empty
+            // Update designations for existing users if any
+            try {
+                stmt.executeUpdate("UPDATE users SET designation = 'Principal', department = 'Administration' WHERE username = 'principal'");
+                stmt.executeUpdate("UPDATE users SET designation = 'Head of Department (HOD)', department = 'Computer Science & AI' WHERE username = 'mona.nagar'");
+                stmt.executeUpdate("UPDATE users SET designation = 'Head of Department (HOD)', department = 'AI & Data Science' WHERE username = 'anand.gaur'");
+                stmt.executeUpdate("UPDATE users SET designation = 'Assistant Professor', department = 'Computer Science & AI' WHERE username = 'abhinav.batra'");
+                stmt.executeUpdate("UPDATE users SET designation = 'Assistant Professor', department = 'Information Technology' WHERE username = 'amit.kumar'");
+                stmt.executeUpdate("UPDATE users SET designation = 'Exam Cell Coordinator', department = 'Examination Cell' WHERE username = 'abhishek.sihag'");
+            } catch (SQLException ignored) {}
+
+            // 3. Seed initial notices if empty
             try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM messages")) {
                 if (rs.next() && rs.getInt(1) == 0) {
                     stmt.executeUpdate(
                         "INSERT INTO messages (sender, receiver, message) VALUES " +
-                        "('principal.office', 'ALL', '[CIRCULAR] Welcome to JECRC StaffNet: Official College Staff Information, Notice & Circular Distribution System (Academic Year 2026-27).')," +
-                        "('mona.nagar', 'ALL', '[MEETING] Academic Review & Project Progress meeting for 3rd Year CSE (AI) scheduled for Friday at 2:30 PM in Lab 3.')," +
-                        "('abhishek.sihag', 'ALL', '[EXAM] Faculty invigilation duty rosters for upcoming Mid-Term examinations are now published. Please verify your slots.')," +
-                        "('anand.gaur', 'ALL', '[URGENT] NAAC Accreditation criterion documentation verification tomorrow morning at 10:00 AM. All department files must be updated.')"
+                        "('principal', 'MAIN', '[CIRCULAR] Welcome to JECRC StaffNet: Official College Staff Information, Notice & Circular Distribution System (Academic Year 2026-27).')," +
+                        "('principal', 'MAIN', '[URGENT] NAAC peer-team review scheduled for all departments next week. All HODs to verify course files.')," +
+                        "('mona.nagar', 'MAIN', '[MEETING] Academic Council Meeting for all department heads on Friday at 3:00 PM in Conference Room 1.')," +
+                        "('mona.nagar', 'DEPT:Computer Science & AI', '[MEETING] CSE Departmental Faculty Meeting regarding Lab 3 upgrades tomorrow at 11:30 AM.')," +
+                        "('amit.kumar', 'DEPT:Information Technology', '[CIRCULAR] IT Department 5th semester lab schedule has been finalized. Please review on the portal.')"
                     );
                 }
             } catch (SQLException ignored) {}
 
-            System.out.println("[DBHandler] StaffNet schema initialized and staff directory verified.");
+            System.out.println("[DBHandler] StaffNet schema initialized with Department & Authority partition.");
         } catch (SQLException e) {
             System.err.println("[DBHandler] Schema initialization notice: " + e.getMessage());
         }
     }
 
-    /**
-     * Hashes a plain-text password using the SHA-256 algorithm.
-     */
     public static String hashPassword(String password) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -173,9 +176,6 @@ public class DBHandler {
         }
     }
 
-    /**
-     * Staff profile representation with institutional department, designation, and role.
-     */
     public static class StaffProfile {
         public final String username;
         public final String department;
@@ -184,18 +184,15 @@ public class DBHandler {
 
         public StaffProfile(String username, String department, String designation, String role) {
             this.username = username;
-            this.department = (department != null && !department.trim().isEmpty()) ? department.trim() : "Computer Science & Engineering";
+            this.department = (department != null && !department.trim().isEmpty()) ? department.trim() : "Computer Science & AI";
             this.designation = (designation != null && !designation.trim().isEmpty()) ? designation.trim() : "Assistant Professor";
             this.role = (role != null && !role.trim().isEmpty()) ? role.trim() : "FACULTY";
         }
     }
 
-    /**
-     * Retrieves the staff profile including department and designation.
-     */
     public static StaffProfile getStaffProfile(String username) {
         if (username == null) {
-            return new StaffProfile("Unknown", "Computer Science & AI", "Faculty", "FACULTY");
+            return new StaffProfile("Unknown", "Computer Science & AI", "Assistant Professor", "FACULTY");
         }
         String sql = "SELECT username, department, designation, role FROM users WHERE LOWER(username) = LOWER(?)";
         try (Connection conn = getConnection();
@@ -215,12 +212,9 @@ public class DBHandler {
         } catch (SQLException e) {
             System.err.println("[DBHandler] Profile lookup notice: " + e.getMessage());
         }
-        return new StaffProfile(username, "Computer Science & AI", "Faculty", "FACULTY");
+        return new StaffProfile(username, "Computer Science & AI", "Assistant Professor", "FACULTY");
     }
 
-    /**
-     * Registers a new staff member into the 'users' table with department and designation.
-     */
     public static boolean registerUser(String username, String password, String department, String designation, String role) {
         if (username == null || username.trim().isEmpty() || password == null || password.trim().isEmpty()) {
             return false;
@@ -251,9 +245,6 @@ public class DBHandler {
         return registerUser(username, password, "Computer Science & AI", "Assistant Professor", "FACULTY");
     }
 
-    /**
-     * Authenticates a user against the 'users' table.
-     */
     public static boolean authenticateUser(String username, String password) {
         if (username == null || password == null) {
             return false;
@@ -277,9 +268,6 @@ public class DBHandler {
         return false;
     }
 
-    /**
-     * Persists a notice or chat message into the 'messages' table.
-     */
     public static boolean saveMessage(String sender, String receiver, String message) {
         String sql = "INSERT INTO messages (sender, receiver, message, timestamp) VALUES (?, ?, ?, NOW())";
         try (Connection conn = getConnection();
@@ -296,9 +284,6 @@ public class DBHandler {
         }
     }
 
-    /**
-     * Represents a single chat history entry.
-     */
     public static class HistoryRecord {
         public final String timestamp;
         public final String sender;
@@ -314,24 +299,30 @@ public class DBHandler {
     }
 
     /**
-     * Retrieves historical messages relevant to the given user:
-     * - All broadcast circulars (receiver = 'ALL')
-     * - All confidential staff memos where the user was either sender or receiver
-     * Ordered chronologically.
+     * Retrieves historical messages partitioned by department and authority:
+     * - Main Notice Board messages (receiver = 'MAIN' or 'ALL')
+     * - The user's specific Department Notice Board messages (receiver = 'DEPT:<userDepartment>')
+     * - 1-to-1 Confidential Faculty Memos where the user was sender or recipient
+     * Notices belonging to other departments are excluded.
      */
-    public static List<HistoryRecord> getChatHistory(String username) {
+    public static List<HistoryRecord> getChatHistory(String username, String department) {
         List<HistoryRecord> history = new ArrayList<>();
+        String deptTarget = "DEPT:" + (department != null ? department.trim() : "");
+
         String sql = "SELECT sender, receiver, message, " +
                      "DATE_FORMAT(timestamp, '%Y-%m-%d %H:%i:%s') AS formatted_time " +
                      "FROM messages " +
-                     "WHERE receiver = 'ALL' OR LOWER(sender) = LOWER(?) OR LOWER(receiver) = LOWER(?) " +
-                     "ORDER BY timestamp ASC LIMIT 100";
+                     "WHERE receiver = 'MAIN' OR receiver = 'ALL' " +
+                     "   OR receiver = ? " +
+                     "   OR LOWER(sender) = LOWER(?) OR LOWER(receiver) = LOWER(?) " +
+                     "ORDER BY timestamp ASC LIMIT 150";
 
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            pstmt.setString(1, username);
+            pstmt.setString(1, deptTarget);
             pstmt.setString(2, username);
+            pstmt.setString(3, username);
 
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {

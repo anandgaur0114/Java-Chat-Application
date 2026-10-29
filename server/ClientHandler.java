@@ -11,12 +11,10 @@ import java.util.List;
 
 /**
  * ClientHandler manages communication with an individual connected college staff member.
- * Demonstrates:
- *  - java.lang.Runnable for multi-threaded concurrency
- *  - Socket I/O streaming using BufferedReader and PrintWriter (UTF-8)
- *  - Protocol parsing and command routing
- *  - Staff authentication and role/department tracking
- *  - Clean disconnection handling
+ * Enforces:
+ *  - Main Notice Board permission check: Only Principal and HODs may broadcast campus-wide.
+ *  - Department isolation: Department notices are routed strictly to colleagues of the same department.
+ *  - 1-to-1 Confidential Faculty Memos.
  */
 public class ClientHandler implements Runnable {
 
@@ -24,7 +22,7 @@ public class ClientHandler implements Runnable {
     private BufferedReader in;
     private PrintWriter out;
     private String username;
-    private String department = "Computer Science & Engineering";
+    private String department = "Computer Science & AI";
     private String designation = "Assistant Professor";
     private boolean isAuthenticated = false;
 
@@ -70,9 +68,6 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    /**
-     * Processes protocol commands before a client is authenticated.
-     */
     private void handleAuthProtocol(String commandLine) {
         String[] parts = commandLine.split("\\|", 3);
         String action = parts[0];
@@ -97,7 +92,7 @@ public class ClientHandler implements Runnable {
 
                         sendMessage("LOGIN_SUCCESS|" + user + "|" + profile.department + "|" + profile.designation);
                         ChatServer.registerClient(user, this);
-                        sendChatHistory(user);
+                        sendChatHistory(user, profile.department);
                     } else {
                         sendMessage("LOGIN_FAIL|Invalid staff credentials. Please check your username and password.");
                     }
@@ -135,48 +130,76 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    /**
-     * Streams previous notices and confidential memos from MySQL to the logged-in staff member.
-     */
-    private void sendChatHistory(String user) {
-        List<DBHandler.HistoryRecord> history = DBHandler.getChatHistory(user);
+    private void sendChatHistory(String user, String dept) {
+        List<DBHandler.HistoryRecord> history = DBHandler.getChatHistory(user, dept);
         for (DBHandler.HistoryRecord rec : history) {
-            sendMessage("HIST_MSG|" + rec.timestamp + "|" + rec.sender + "|" + rec.receiver + "|" + rec.message);
+            if ("MAIN".equalsIgnoreCase(rec.receiver) || "ALL".equalsIgnoreCase(rec.receiver)) {
+                sendMessage("HIST_MAIN|" + rec.timestamp + "|" + rec.sender + "|" + rec.message);
+            } else if (rec.receiver.startsWith("DEPT:")) {
+                String dName = rec.receiver.substring(5);
+                sendMessage("HIST_DEPT|" + rec.timestamp + "|" + rec.sender + "|" + dName + "|" + rec.message);
+            } else {
+                sendMessage("HIST_PRIV|" + rec.timestamp + "|" + rec.sender + "|" + rec.receiver + "|" + rec.message);
+            }
         }
         sendMessage("HIST_DONE");
     }
 
-    /**
-     * Processes official notice broadcasts and confidential memos.
-     */
     private void handleChatProtocol(String commandLine) {
-        if (commandLine.startsWith("FILE_BROADCAST|")) {
+        // --- 1. File Attachments ---
+        if (commandLine.startsWith("FILE_BROADCAST_MAIN|")) {
             String[] fParts = commandLine.split("\\|", 3);
             if (fParts.length >= 3) {
-                String fileName = fParts[1];
-                String base64 = fParts[2];
-                ChatServer.broadcastFile(username, fileName, base64);
+                if (!DBHandler.isAuthority(designation)) {
+                    sendMessage("SYS_MSG|[ERROR] Permission Denied: Only Principal and HODs can attach documents on the Main Notice Board.");
+                    return;
+                }
+                ChatServer.broadcastMainFile(username, fParts[1], fParts[2]);
+            }
+            return;
+        } else if (commandLine.startsWith("FILE_BROADCAST_DEPT|")) {
+            String[] fParts = commandLine.split("\\|", 3);
+            if (fParts.length >= 3) {
+                ChatServer.broadcastDeptFile(username, department, fParts[1], fParts[2]);
             }
             return;
         } else if (commandLine.startsWith("FILE_PRIVATE|")) {
             String[] fParts = commandLine.split("\\|", 4);
             if (fParts.length >= 4) {
-                String recipient = fParts[1].trim();
-                String fileName = fParts[2];
-                String base64 = fParts[3];
-                ChatServer.sendPrivateFile(username, recipient, fileName, base64);
+                ChatServer.sendPrivateFile(username, fParts[1].trim(), fParts[2], fParts[3]);
             }
             return;
         }
 
+        // --- 2. Notice Board & Memo Messages ---
         String[] parts = commandLine.split("\\|", 3);
         String action = parts[0];
 
         switch (action) {
-            case "BROADCAST":
+            case "BROADCAST_MAIN":
                 if (parts.length >= 2) {
-                    String message = parts[1];
-                    ChatServer.broadcastMessage(username, message);
+                    if (!DBHandler.isAuthority(designation)) {
+                        sendMessage("SYS_MSG|[ERROR] Permission Denied: Only Principal and HODs can broadcast on the Main Notice Board.");
+                        return;
+                    }
+                    ChatServer.broadcastMainMessage(username, parts[1]);
+                }
+                break;
+
+            case "BROADCAST_DEPT":
+                if (parts.length >= 2) {
+                    ChatServer.broadcastDeptMessage(username, department, parts[1]);
+                }
+                break;
+
+            case "BROADCAST":
+                // Fallback: If authority, broadcast to Main; otherwise broadcast to department
+                if (parts.length >= 2) {
+                    if (DBHandler.isAuthority(designation)) {
+                        ChatServer.broadcastMainMessage(username, parts[1]);
+                    } else {
+                        ChatServer.broadcastDeptMessage(username, department, parts[1]);
+                    }
                 }
                 break;
 
@@ -189,10 +212,7 @@ public class ClientHandler implements Runnable {
                         sendMessage("SYS_MSG|Cannot send confidential memo to yourself.");
                         return;
                     }
-
                     ChatServer.sendPrivateMessage(username, recipient, message);
-                } else {
-                    sendMessage("SYS_MSG|Invalid confidential memo format.");
                 }
                 break;
 

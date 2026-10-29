@@ -15,13 +15,11 @@ import java.util.List;
 /**
  * ChatClient handles TCP socket communication with the ChatServer
  * for JECRC StaffNet (College Staff Information & Circular System).
- * Demonstrates:
- *  - Socket creation and connection management
- *  - Separate background worker thread for non-blocking stream listening
- *  - Protocol message dispatching
- *  - Staff profile awareness (Department, Designation)
- *  - Base64 encoding/decoding for academic document transfer
- *  - Observer/Listener pattern to notify GUI on the Swing EDT
+ * Handles:
+ *  - Main Campus Notice Board (Principal & HOD broadcasts)
+ *  - Department-specific Notice Board (isolated by department)
+ *  - Confidential Faculty Memos (1-to-1)
+ *  - Academic file transmission (Base64 over TCP stream)
  */
 public class ChatClient {
 
@@ -30,16 +28,24 @@ public class ChatClient {
         void onLoginFailure(String reason);
         void onRegisterSuccess(String message);
         void onRegisterFailure(String reason);
-        void onBroadcastReceived(String timestamp, String sender, String message);
+
+        void onMainNoticeReceived(String timestamp, String sender, String message);
+        void onDeptNoticeReceived(String timestamp, String sender, String department, String message);
         void onPrivateReceived(String timestamp, String sender, String message);
         void onPrivateSent(String timestamp, String recipient, String message);
         void onSystemMessage(String timestamp, String message);
         void onUserListUpdated(List<String> rawUsers);
-        void onHistoryMessage(String timestamp, String sender, String receiver, String message);
+
+        void onHistoryMainNotice(String timestamp, String sender, String message);
+        void onHistoryDeptNotice(String timestamp, String sender, String department, String message);
+        void onHistoryPrivate(String timestamp, String sender, String receiver, String message);
         void onHistoryDone();
-        void onFileBroadcastReceived(String timestamp, String sender, String fileName, byte[] fileData);
+
+        void onFileMainReceived(String timestamp, String sender, String fileName, byte[] fileData);
+        void onFileDeptReceived(String timestamp, String sender, String department, String fileName, byte[] fileData);
         void onFilePrivateReceived(String timestamp, String sender, String fileName, byte[] fileData);
         void onFilePrivateSent(String timestamp, String recipient, String fileName, byte[] fileData);
+
         void onDisconnected(String reason);
     }
 
@@ -73,9 +79,6 @@ public class ChatClient {
         return socket != null && socket.isConnected() && !socket.isClosed();
     }
 
-    /**
-     * Connects to the server and launches the background reader thread.
-     */
     public synchronized void connect(String host, int port) throws IOException {
         if (isConnected()) {
             return;
@@ -86,15 +89,11 @@ public class ChatClient {
         out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
         isRunning = true;
 
-        // Background worker thread to listen for incoming messages from the server
         listenerThread = new Thread(this::listenLoop, "ChatClient-ListenerThread");
         listenerThread.setDaemon(true);
         listenerThread.start();
     }
 
-    /**
-     * Continuous loop reading protocol messages from the server socket.
-     */
     private void listenLoop() {
         try {
             String line;
@@ -112,9 +111,6 @@ public class ChatClient {
         }
     }
 
-    /**
-     * Parses incoming protocol commands from the server.
-     */
     private void processServerMessage(String line) {
         String[] parts = line.split("\\|", 5);
         String command = parts[0];
@@ -126,9 +122,6 @@ public class ChatClient {
                     if (parts.length >= 4) {
                         currentDepartment = parts[2];
                         currentDesignation = parts[3];
-                    } else {
-                        currentDepartment = "Computer Science & AI";
-                        currentDesignation = "Assistant Professor";
                     }
                     if (listener != null) {
                         listener.onLoginSuccess(currentUsername, currentDepartment, currentDesignation);
@@ -154,36 +147,39 @@ public class ChatClient {
                 }
                 break;
 
-            case "MSG":
-                // Format: MSG|timestamp|sender|message
+            case "MSG_MAIN":
+                // Format: MSG_MAIN|timestamp|sender|message
                 if (parts.length >= 4 && listener != null) {
-                    listener.onBroadcastReceived(parts[1], parts[2], parts[3]);
+                    listener.onMainNoticeReceived(parts[1], parts[2], parts[3]);
+                }
+                break;
+
+            case "MSG_DEPT":
+                // Format: MSG_DEPT|timestamp|sender|department|message
+                if (parts.length >= 5 && listener != null) {
+                    listener.onDeptNoticeReceived(parts[1], parts[2], parts[3], parts[4]);
                 }
                 break;
 
             case "PRIV_MSG":
-                // Format: PRIV_MSG|timestamp|sender|message
                 if (parts.length >= 4 && listener != null) {
                     listener.onPrivateReceived(parts[1], parts[2], parts[3]);
                 }
                 break;
 
             case "PRIV_SENT":
-                // Format: PRIV_SENT|timestamp|recipient|message
                 if (parts.length >= 4 && listener != null) {
                     listener.onPrivateSent(parts[1], parts[2], parts[3]);
                 }
                 break;
 
             case "SYS_MSG":
-                // Format: SYS_MSG|timestamp|text
                 if (parts.length >= 3 && listener != null) {
                     listener.onSystemMessage(parts[1], parts[2]);
                 }
                 break;
 
             case "USER_LIST":
-                // Format: USER_LIST|user1:dept:desig,user2:dept:desig,...
                 if (listener != null) {
                     List<String> users = new ArrayList<>();
                     if (parts.length >= 2 && !parts[1].trim().isEmpty()) {
@@ -193,10 +189,24 @@ public class ChatClient {
                 }
                 break;
 
-            case "HIST_MSG":
-                // Format: HIST_MSG|timestamp|sender|receiver|message
+            case "HIST_MAIN":
+                // Format: HIST_MAIN|timestamp|sender|message
+                if (parts.length >= 4 && listener != null) {
+                    listener.onHistoryMainNotice(parts[1], parts[2], parts[3]);
+                }
+                break;
+
+            case "HIST_DEPT":
+                // Format: HIST_DEPT|timestamp|sender|department|message
                 if (parts.length >= 5 && listener != null) {
-                    listener.onHistoryMessage(parts[1], parts[2], parts[3], parts[4]);
+                    listener.onHistoryDeptNotice(parts[1], parts[2], parts[3], parts[4]);
+                }
+                break;
+
+            case "HIST_PRIV":
+                // Format: HIST_PRIV|timestamp|sender|receiver|message
+                if (parts.length >= 5 && listener != null) {
+                    listener.onHistoryPrivate(parts[1], parts[2], parts[3], parts[4]);
                 }
                 break;
 
@@ -206,12 +216,27 @@ public class ChatClient {
                 }
                 break;
 
-            case "FILE_MSG": {
-                // Format: FILE_MSG|timestamp|sender|fileName|base64
+            case "FILE_MSG_MAIN": {
+                // Format: FILE_MSG_MAIN|timestamp|sender|fileName|base64
                 if (parts.length >= 5 && listener != null) {
                     try {
                         byte[] data = Base64.getDecoder().decode(parts[4]);
-                        listener.onFileBroadcastReceived(parts[1], parts[2], parts[3], data);
+                        listener.onFileMainReceived(parts[1], parts[2], parts[3], data);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+                break;
+            }
+
+            case "FILE_MSG_DEPT": {
+                // Format: FILE_MSG_DEPT|timestamp|sender|dept|fileName|base64
+                // Need split 6 for this:
+                String[] fParts = line.split("\\|", 6);
+                if (fParts.length >= 6 && listener != null) {
+                    try {
+                        byte[] data = Base64.getDecoder().decode(fParts[5]);
+                        listener.onFileDeptReceived(fParts[1], fParts[2], fParts[3], fParts[4], data);
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
@@ -220,7 +245,6 @@ public class ChatClient {
             }
 
             case "FILE_PRIV_MSG": {
-                // Format: FILE_PRIV_MSG|timestamp|sender|fileName|base64
                 if (parts.length >= 5 && listener != null) {
                     try {
                         byte[] data = Base64.getDecoder().decode(parts[4]);
@@ -233,7 +257,6 @@ public class ChatClient {
             }
 
             case "FILE_PRIV_SENT": {
-                // Format: FILE_PRIV_SENT|timestamp|recipient|fileName|base64
                 if (parts.length >= 5 && listener != null) {
                     try {
                         byte[] data = Base64.getDecoder().decode(parts[4]);
@@ -258,21 +281,26 @@ public class ChatClient {
         sendMessage("REGISTER|" + username + "|" + password + "|" + department + "|" + designation);
     }
 
-    public synchronized void sendRegister(String username, String password) {
-        sendRegister(username, password, "Computer Science & AI", "Assistant Professor");
+    public synchronized void sendBroadcastMain(String message) {
+        sendMessage("BROADCAST_MAIN|" + message);
     }
 
-    public synchronized void sendBroadcast(String message) {
-        sendMessage("BROADCAST|" + message);
+    public synchronized void sendBroadcastDept(String message) {
+        sendMessage("BROADCAST_DEPT|" + message);
     }
 
     public synchronized void sendPrivate(String recipient, String message) {
         sendMessage("PRIVATE|" + recipient + "|" + message);
     }
 
-    public synchronized void sendFileBroadcast(String fileName, byte[] data) {
+    public synchronized void sendFileBroadcastMain(String fileName, byte[] data) {
         String base64 = Base64.getEncoder().encodeToString(data);
-        sendMessage("FILE_BROADCAST|" + fileName + "|" + base64);
+        sendMessage("FILE_BROADCAST_MAIN|" + fileName + "|" + base64);
+    }
+
+    public synchronized void sendFileBroadcastDept(String fileName, byte[] data) {
+        String base64 = Base64.getEncoder().encodeToString(data);
+        sendMessage("FILE_BROADCAST_DEPT|" + fileName + "|" + base64);
     }
 
     public synchronized void sendFilePrivate(String recipient, String fileName, byte[] data) {
