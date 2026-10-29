@@ -20,6 +20,7 @@ import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +30,7 @@ import javax.swing.BoxLayout;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JEditorPane;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
@@ -48,27 +50,29 @@ import javax.swing.UIManager;
 import javax.swing.border.EmptyBorder;
 
 /**
- * ChatGUI provides a presentation-grade, modern desktop interface rendering 
- * rich HTML/CSS chat bubbles (WhatsApp / Slack / Discord aesthetic) for each conversation,
- * with full support for sharing files (PDF, PPT, Word, Images, etc.).
+ * ChatGUI provides a presentation-grade desktop intranet client for college staff
+ * (JECRC StaffNet: College Staff Information & Circular Distribution System).
  * Demonstrates:
- *  - HTML/CSS rendering in Java Swing (JEditorPane with speech bubbles)
- *  - File sharing over TCP Sockets using Base64 encoding
- *  - Per-user conversation decoupling (JTabbedPane & Detachable Pop-Out Windows)
+ *  - Department & Designation aware staff authentication
+ *  - Categorized official circulars (Urgent, Meeting/MoM, Exam Cell, Lab, General)
+ *  - Rich HTML/CSS institutional notice card rendering in Java Swing
+ *  - Academic document dispatch (PDF orders, PPT lecture slides, DOCX duty rosters)
+ *  - Per-staff confidential memo windows (JTabbedPane & Detachable Pop-Outs)
  *  - Event Dispatch Thread (EDT) safety via SwingUtilities.invokeLater
- *  - Live technical telemetry bar (TCP Socket status, MySQL persistence, SHA-256)
+ *  - Zero external cloud dependencies (100% offline TCP/IP socket intranet)
  */
 public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
-    // Modern Palette (Slate & Indigo)
-    private static final Color COLOR_PRIMARY = new Color(79, 70, 229);       // Indigo 600
-    private static final Color COLOR_PRIMARY_HOVER = new Color(67, 56, 202); // Indigo 700
+    // Institutional Academic Color Palette
+    private static final Color COLOR_PRIMARY = new Color(30, 58, 138);       // Academic Navy (Blue 900)
+    private static final Color COLOR_PRIMARY_HOVER = new Color(29, 78, 216); // Blue 700
     private static final Color COLOR_NAVY_BAR = new Color(15, 23, 42);       // Slate 900
     private static final Color COLOR_BG_CANVAS = new Color(241, 245, 249);   // Slate 100
     private static final Color COLOR_BORDER = new Color(226, 232, 240);      // Slate 200
     private static final Color COLOR_TEXT_MAIN = new Color(30, 41, 59);      // Slate 800
     private static final Color COLOR_ONLINE_GREEN = new Color(16, 185, 129); // Emerald 500
     private static final Color COLOR_LOGOUT_RED = new Color(225, 29, 72);    // Rose 600
+    private static final Color COLOR_GOLD_ACCENT = new Color(217, 119, 6);   // Amber 600
 
     private static final String VIEW_LOGIN = "LOGIN_VIEW";
     private static final String VIEW_CHAT = "CHAT_VIEW";
@@ -82,6 +86,8 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     private JTextField portField;
     private JTextField usernameField;
     private JPasswordField passwordField;
+    private JComboBox<String> departmentCombo;
+    private JComboBox<String> designationCombo;
     private JLabel authStatusLabel;
     private JButton loginBtn;
     private JButton registerBtn;
@@ -90,30 +96,57 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     private JLabel currentUserLabel;
     private JLabel userStatusLabel;
     private JTabbedPane tabbedPane;
-    private DefaultListModel<String> userListModel;
-    private JList<String> userJList;
+    private DefaultListModel<StaffItem> userListModel;
+    private JList<StaffItem> userJList;
     private JLabel targetIndicator;
+    private JComboBox<String> noticeCategoryCombo;
     private JTextField messageInputField;
     private JButton attachFileBtn;
     private JButton sendBtn;
     private JButton logoutBtn;
     private JLabel contactsCountLabel;
 
-    private static final String GROUP_TARGET = "Everyone (Group Broadcast)";
-    private String selectedTarget = null; // null = Group broadcast
+    private static final String NOTICE_BOARD_NAME = "📢 Faculty Notice Board & Circulars";
+    private String selectedTarget = null; // null = Notice Board (Broadcast to all staff)
 
-    // Conversation windows map: <Key, ConversationWindow>
+    // Map of active conversations: <Key, ConversationWindow>
     private final Map<String, ConversationWindow> conversations = new LinkedHashMap<>();
 
-    // HTML Base Template for Message Bubbles
+    // Staff directory cache for rich names
+    private final Map<String, StaffItem> staffDirectory = new LinkedHashMap<>();
+
+    // HTML Base Template for Notice Cards & Chat Bubbles
     private static final String HTML_HEADER = 
         "<html><head><style>" +
         "body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; margin: 8px 12px; background-color: #F8FAFC; }" +
         "</style></head><body>";
     private static final String HTML_FOOTER = "</body></html>";
 
+    /**
+     * Represents a staff member entry for the directory and dropdowns.
+     */
+    public static class StaffItem {
+        public final String username;
+        public final String department;
+        public final String designation;
+        public final boolean isNoticeBoard;
+
+        public StaffItem(String username, String department, String designation, boolean isNoticeBoard) {
+            this.username = username;
+            this.department = department;
+            this.designation = designation;
+            this.isNoticeBoard = isNoticeBoard;
+        }
+
+        @Override
+        public String toString() {
+            if (isNoticeBoard) return NOTICE_BOARD_NAME;
+            return username + " (" + designation + ")";
+        }
+    }
+
     public ChatGUI() {
-        super("Java Sockets Chat Application");
+        super("JECRC StaffNet — Faculty Information & Circular Distribution System");
         client.setListener(this);
 
         initSystemRendering();
@@ -123,18 +156,18 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                handleExit();
+                closeAllPoppedOutFrames();
+                client.sendLogout();
+                System.exit(0);
             }
         });
 
-        setSize(1080, 750);
-        setMinimumSize(new Dimension(860, 620));
+        setSize(1100, 780);
+        setMinimumSize(new Dimension(960, 640));
         setLocationRelativeTo(null);
     }
 
     private void initSystemRendering() {
-        System.setProperty("awt.useSystemAAFontSettings", "on");
-        System.setProperty("swing.aatext", "true");
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception ignored) {}
@@ -148,61 +181,70 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 1. MODERN LOGIN PANEL
+    // 1. INSTITUTIONAL LOGIN & REGISTRATION PANEL
     // =========================================================================
     private JPanel createLoginPanel() {
         JPanel background = new JPanel(new GridBagLayout());
-        background.setBackground(COLOR_BG_CANVAS);
+        background.setBackground(new Color(241, 245, 249));
 
         JPanel card = new JPanel(new GridBagLayout()) {
             @Override
             protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(Color.WHITE);
-                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 18, 18);
-                g2.setColor(COLOR_BORDER);
-                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 18, 18);
+                g2.setColor(new Color(255, 255, 255));
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 16, 16);
+                g2.setColor(new Color(203, 213, 225));
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 16, 16);
                 g2.dispose();
             }
         };
         card.setOpaque(false);
-        card.setBorder(new EmptyBorder(35, 45, 30, 45));
+        card.setBorder(new EmptyBorder(30, 40, 30, 40));
 
         GridBagConstraints c = new GridBagConstraints();
         c.insets = new Insets(6, 8, 6, 8);
         c.fill = GridBagConstraints.HORIZONTAL;
 
-        JLabel title = new JLabel(
-            "<html><center>" +
-            "<font face='Segoe UI' size='6' color='#1E293B'><b>💬 Java Sockets Chat Room</b></font><br>" +
-            "<font face='Segoe UI' size='3' color='#4F46E5'><b>Messaging & File Sharing Platform</b></font><br>" +
-            "<font face='Segoe UI' size='2' color='#64748B'>JDK 25 • TCP Sockets • MySQL 8.0 • File Transfer (PDF/PPT/Docs)</font>" +
-            "</center></html>", SwingConstants.CENTER
-        );
+        // Title Header
+        JLabel headerIcon = new JLabel("🏛️ JECRC CAMPUS INTRANET", SwingConstants.CENTER);
+        headerIcon.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        headerIcon.setForeground(COLOR_PRIMARY);
         c.gridx = 0; c.gridy = 0; c.gridwidth = 2;
-        card.add(title, c);
+        card.add(headerIcon, c);
 
+        JLabel subHeader = new JLabel("Faculty & Staff Information & Circular Distribution System", SwingConstants.CENTER);
+        subHeader.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        subHeader.setForeground(new Color(100, 116, 139));
+        c.gridy = 1;
+        card.add(subHeader, c);
+
+        // Server Host & Port
+        JPanel serverRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
+        serverRow.setOpaque(false);
+        serverRow.add(new JLabel("Host:"));
+        hostField = new JTextField("localhost", 9);
+        styleInputField(hostField);
+        serverRow.add(hostField);
+
+        serverRow.add(new JLabel("Port:"));
+        portField = new JTextField(String.valueOf(ChatClient.class.getSimpleName().hashCode() > 0 ? "12345" : "12345"), 5);
+        styleInputField(portField);
+        serverRow.add(portField);
+
+        c.gridy = 2;
+        card.add(serverRow, c);
+
+        // Username
         c.gridwidth = 1;
-
-        c.gridy = 1; c.gridx = 0;
-        card.add(createFieldLabel("Server Host:"), c);
-        hostField = createStyledTextField("localhost");
-        c.gridx = 1;
-        card.add(hostField, c);
-
-        c.gridy = 2; c.gridx = 0;
-        card.add(createFieldLabel("TCP Port:"), c);
-        portField = createStyledTextField("12345");
-        c.gridx = 1;
-        card.add(portField, c);
-
         c.gridy = 3; c.gridx = 0;
-        card.add(createFieldLabel("Username:"), c);
+        card.add(createFieldLabel("Staff Username:"), c);
         usernameField = createStyledTextField("");
         c.gridx = 1;
         card.add(usernameField, c);
 
+        // Password
         c.gridy = 4; c.gridx = 0;
         card.add(createFieldLabel("Password:"), c);
         passwordField = new JPasswordField();
@@ -210,33 +252,68 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         c.gridx = 1;
         card.add(passwordField, c);
 
+        // Department
+        c.gridy = 5; c.gridx = 0;
+        card.add(createFieldLabel("Department:"), c);
+        departmentCombo = new JComboBox<>(new String[]{
+            "Computer Science & AI",
+            "AI & Data Science",
+            "Information Technology",
+            "Examination Cell",
+            "AI & Computing Labs",
+            "Principal Secretariat"
+        });
+        departmentCombo.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        c.gridx = 1;
+        card.add(departmentCombo, c);
+
+        // Designation
+        c.gridy = 6; c.gridx = 0;
+        card.add(createFieldLabel("Designation:"), c);
+        designationCombo = new JComboBox<>(new String[]{
+            "Assistant Professor & Guide",
+            "Head of Department (HOD)",
+            "Associate Professor",
+            "Assistant Professor",
+            "Exam Cell Coordinator",
+            "Senior Lab Incharge",
+            "Administrative Officer"
+        });
+        designationCombo.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        c.gridx = 1;
+        card.add(designationCombo, c);
+
+        // Status Label
         authStatusLabel = new JLabel(" ", SwingConstants.CENTER);
-        authStatusLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        authStatusLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
         authStatusLabel.setForeground(COLOR_LOGOUT_RED);
-        c.gridy = 5; c.gridx = 0; c.gridwidth = 2;
+        c.gridy = 7; c.gridx = 0; c.gridwidth = 2;
         card.add(authStatusLabel, c);
 
+        // Buttons
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 5));
         btnPanel.setOpaque(false);
 
-        loginBtn = createModernButton("Log In", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 120, 42);
+        loginBtn = createModernButton("Log In", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 130, 42);
         loginBtn.addActionListener(e -> attemptAuth(true));
 
-        registerBtn = createModernButton("Register New User", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 180, 42);
+        registerBtn = createModernButton("Register New Staff", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 180, 42);
         registerBtn.addActionListener(e -> attemptAuth(false));
 
         btnPanel.add(loginBtn);
         btnPanel.add(registerBtn);
 
-        c.gridy = 6;
+        c.gridy = 8;
         card.add(btnPanel, c);
 
+        // Demo Tip
         JLabel tipLabel = new JLabel(
             "<html><center><font face='Segoe UI' size='2' color='#64748B'>" +
-            "💡 <b>Demo Tip:</b> Pre-seeded users: <b>Anand</b> / <b>password123</b> or <b>Sunanda</b> / <b>password123</b>" +
+            "💡 <b>Default Staff Accounts</b> (Password: <b>admin123</b>):<br/>" +
+            "<b>mona.nagar</b> (Guide) • <b>anand.gaur</b> (HOD) • <b>abhinav.batra</b> (Exam) • <b>amit.kumar</b> (Lab)" +
             "</font></center></html>", SwingConstants.CENTER
         );
-        c.gridy = 7;
+        c.gridy = 9;
         card.add(tipLabel, c);
 
         passwordField.addActionListener(e -> attemptAuth(true));
@@ -248,7 +325,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
     private JLabel createFieldLabel(String text) {
         JLabel lbl = new JLabel(text);
-        lbl.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        lbl.setFont(new Font("Segoe UI", Font.BOLD, 13));
         lbl.setForeground(COLOR_TEXT_MAIN);
         return lbl;
     }
@@ -260,8 +337,8 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     private void styleInputField(JTextField tf) {
-        tf.setFont(new Font("Segoe UI", Font.PLAIN, 15));
-        tf.setPreferredSize(new Dimension(200, 38));
+        tf.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        tf.setPreferredSize(new Dimension(210, 36));
         tf.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(COLOR_BORDER, 1, true),
             BorderFactory.createEmptyBorder(4, 10, 4, 10)
@@ -273,9 +350,11 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         String portStr = portField.getText().trim();
         String user = usernameField.getText().trim();
         String pass = new String(passwordField.getPassword()).trim();
+        String dept = (String) departmentCombo.getSelectedItem();
+        String desig = (String) designationCombo.getSelectedItem();
 
         if (user.isEmpty() || pass.isEmpty()) {
-            authStatusLabel.setText("Please enter both username and password.");
+            authStatusLabel.setText("Please enter both staff username and password.");
             return;
         }
 
@@ -288,7 +367,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         }
 
         authStatusLabel.setForeground(COLOR_PRIMARY);
-        authStatusLabel.setText(isLogin ? "Connecting & verifying..." : "Connecting & registering...");
+        authStatusLabel.setText(isLogin ? "Verifying staff credentials..." : "Registering staff account...");
         loginBtn.setEnabled(false);
         registerBtn.setEnabled(false);
 
@@ -300,12 +379,12 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                 if (isLogin) {
                     client.sendLogin(user, pass);
                 } else {
-                    client.sendRegister(user, pass);
+                    client.sendRegister(user, pass, dept, desig);
                 }
             } catch (IOException ex) {
                 SwingUtilities.invokeLater(() -> {
                     authStatusLabel.setForeground(COLOR_LOGOUT_RED);
-                    authStatusLabel.setText("Could not connect to server at " + host + ":" + port);
+                    authStatusLabel.setText("Could not reach Campus Server at " + host + ":" + port);
                     loginBtn.setEnabled(true);
                     registerBtn.setEnabled(true);
                 });
@@ -314,13 +393,13 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 2. MAIN CHAT PANEL
+    // 2. MAIN CHAT & NOTICE DASHBOARD
     // =========================================================================
     private JPanel createChatPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 0));
         panel.setBackground(COLOR_BG_CANVAS);
 
-        // --- Top Bar: Premium Dark Slate with Live Badges ---
+        // --- Top Bar: Institutional Navy Header ---
         JPanel topBar = new JPanel(new BorderLayout(15, 0));
         topBar.setBackground(COLOR_NAVY_BAR);
         topBar.setBorder(new EmptyBorder(12, 20, 12, 20));
@@ -329,50 +408,56 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         userMetaPanel.setLayout(new BoxLayout(userMetaPanel, BoxLayout.Y_AXIS));
         userMetaPanel.setOpaque(false);
 
-        currentUserLabel = new JLabel("Logged in as: -");
-        currentUserLabel.setFont(new Font("Segoe UI", Font.BOLD, 17));
-        currentUserLabel.setForeground(Color.WHITE);
+        JLabel brandHeader = new JLabel("🏛️ JECRC CAMPUS STAFFNET");
+        brandHeader.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        brandHeader.setForeground(Color.WHITE);
 
-        userStatusLabel = new JLabel("● Online  •  Port 12345");
-        userStatusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        currentUserLabel = new JLabel("Logged in as: Staff Member");
+        currentUserLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        currentUserLabel.setForeground(new Color(226, 232, 240));
+
+        userStatusLabel = new JLabel("● Online  •  Secure Campus Intranet (Port 12345)");
+        userStatusLabel.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         userStatusLabel.setForeground(new Color(52, 211, 153));
 
+        userMetaPanel.add(brandHeader);
+        userMetaPanel.add(Box.createVerticalStrut(2));
         userMetaPanel.add(currentUserLabel);
         userMetaPanel.add(Box.createVerticalStrut(2));
         userMetaPanel.add(userStatusLabel);
         topBar.add(userMetaPanel, BorderLayout.WEST);
 
-        // Right Action Controls: Open Downloads Folder + Logout
+        // Right Actions: Downloads + Logout
         JPanel topActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         topActions.setOpaque(false);
 
-        JButton openDownloadsBtn = createModernButton("📁 Downloads", new Color(30, 41, 59), new Color(51, 65, 85), Color.WHITE, 140, 36);
+        JButton openDownloadsBtn = createModernButton("📁 Staff Downloads", new Color(30, 41, 59), new Color(51, 65, 85), Color.WHITE, 160, 38);
         openDownloadsBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         openDownloadsBtn.addActionListener(e -> openDownloadsFolder());
         topActions.add(openDownloadsBtn);
 
-        logoutBtn = createModernButton("Disconnect & Logout", new Color(30, 41, 59), COLOR_LOGOUT_RED, Color.WHITE, 180, 36);
+        logoutBtn = createModernButton("Sign Out", new Color(30, 41, 59), COLOR_LOGOUT_RED, Color.WHITE, 110, 38);
         logoutBtn.addActionListener(e -> {
             closeAllPoppedOutFrames();
-            client.disconnect();
+            client.sendLogout();
             cardLayout.show(mainContainer, VIEW_LOGIN);
-            setTitle("Java Sockets Chat Application");
+            setTitle("JECRC StaffNet — Faculty Information & Circular Distribution System");
             loginBtn.setEnabled(true);
             registerBtn.setEnabled(true);
             authStatusLabel.setForeground(Color.GRAY);
-            authStatusLabel.setText("Logged out successfully.");
+            authStatusLabel.setText("Signed out successfully.");
         });
         topActions.add(logoutBtn);
         topBar.add(topActions, BorderLayout.EAST);
         panel.add(topBar, BorderLayout.NORTH);
 
-        // --- Center Area: Tabbed Multi-Window System + Contact Sidebar ---
+        // --- Center: Multi-Tab Circular Window + Staff Directory ---
         JPanel centerContainer = new JPanel(new BorderLayout());
         centerContainer.setBorder(new EmptyBorder(10, 14, 6, 14));
         centerContainer.setOpaque(false);
 
         tabbedPane = new JTabbedPane();
-        tabbedPane.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        tabbedPane.setFont(new Font("Segoe UI", Font.BOLD, 13));
         tabbedPane.setBackground(Color.WHITE);
 
         tabbedPane.addChangeListener(e -> {
@@ -382,7 +467,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                 for (ConversationWindow win : conversations.values()) {
                     if (win.containerPanel == comp) {
                         selectedTarget = win.targetUser;
-                        updateTargetChip(win.targetUser == null, win.displayName);
+                        updateTargetControls(win.targetUser == null, win.displayName);
                         tabbedPane.setTitleAt(selectedIdx, win.getTabTitle());
                         break;
                     }
@@ -390,13 +475,13 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             }
         });
 
-        // Contacts Sidebar
+        // Staff Directory Sidebar
         JPanel userListContainer = new JPanel(new BorderLayout(0, 8));
         userListContainer.setOpaque(false);
 
         JPanel userListHeader = new JPanel(new BorderLayout());
         userListHeader.setOpaque(false);
-        JLabel contactsTitle = new JLabel("ACTIVE CONTACTS");
+        JLabel contactsTitle = new JLabel("COLLEGE STAFF DIRECTORY");
         contactsTitle.setFont(new Font("Segoe UI", Font.BOLD, 12));
         contactsTitle.setForeground(new Color(100, 116, 139));
 
@@ -411,72 +496,90 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         userListModel = new DefaultListModel<>();
         userJList = new JList<>(userListModel);
         userJList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        userJList.setFont(new Font("Segoe UI", Font.PLAIN, 15));
         userJList.setBackground(Color.WHITE);
-        userJList.setCellRenderer(new ModernContactRenderer());
+        userJList.setCellRenderer(new StaffDirectoryCellRenderer());
 
         userJList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
-                String val = userJList.getSelectedValue();
-                if (val == null || val.contains(GROUP_TARGET)) {
-                    getOrCreateConversation(null, "Group Chat", true);
+                StaffItem item = userJList.getSelectedValue();
+                if (item == null || item.isNoticeBoard) {
+                    getOrCreateConversation(null, "Notice Board", true);
                 } else {
-                    String cleaned = val.replace("●", "").replace("(You)", "").trim();
                     String me = client.getCurrentUsername();
-                    if (me == null || !cleaned.equalsIgnoreCase(me)) {
-                        getOrCreateConversation(cleaned, cleaned, true);
+                    if (me == null || !item.username.equalsIgnoreCase(me)) {
+                        getOrCreateConversation(item.username, item.username + " (" + item.designation + ")", true);
                     }
                 }
             }
         });
 
         JScrollPane userScroll = new JScrollPane(userJList);
-        userScroll.setPreferredSize(new Dimension(240, 300));
+        userScroll.setPreferredSize(new Dimension(280, 300));
         userScroll.setBorder(BorderFactory.createLineBorder(COLOR_BORDER, 1, true));
         userListContainer.add(userScroll, BorderLayout.CENTER);
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tabbedPane, userListContainer);
-        splitPane.setResizeWeight(0.76);
+        splitPane.setResizeWeight(0.74);
         splitPane.setBorder(null);
         splitPane.setDividerSize(8);
         centerContainer.add(splitPane, BorderLayout.CENTER);
         panel.add(centerContainer, BorderLayout.CENTER);
 
-        // --- Bottom Area: Target Chip + Message Input + Attach File + Send ---
+        // --- Bottom Area: Category Selector + Message Input + Attach File + Send ---
         JPanel bottomContainer = new JPanel(new BorderLayout(0, 6));
         bottomContainer.setBorder(new EmptyBorder(4, 14, 10, 14));
         bottomContainer.setOpaque(false);
 
-        JPanel targetChipPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 2));
-        targetChipPanel.setOpaque(false);
-        targetIndicator = new JLabel("🌐 Active Window: Everyone (Group Broadcast)");
+        // Channel indicator & Category Selector Row
+        JPanel noticeControlRow = new JPanel(new BorderLayout(10, 0));
+        noticeControlRow.setOpaque(false);
+
+        targetIndicator = new JLabel("📢 Active Channel: Faculty Notice Board (Broadcast to All Staff)");
         targetIndicator.setFont(new Font("Segoe UI", Font.BOLD, 13));
         targetIndicator.setForeground(COLOR_PRIMARY);
-        targetChipPanel.add(targetIndicator);
-        bottomContainer.add(targetChipPanel, BorderLayout.NORTH);
+        noticeControlRow.add(targetIndicator, BorderLayout.WEST);
+
+        JPanel categoryPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        categoryPanel.setOpaque(false);
+        JLabel catLabel = new JLabel("Notice Category:");
+        catLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        catLabel.setForeground(COLOR_TEXT_MAIN);
+        categoryPanel.add(catLabel);
+
+        noticeCategoryCombo = new JComboBox<>(new String[]{
+            "📢 General Circular",
+            "🚨 Urgent Directive",
+            "📋 Meeting Notice / MoM",
+            "📝 Exam Duty & Academic",
+            "🔬 Lab & Infrastructure"
+        });
+        noticeCategoryCombo.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        categoryPanel.add(noticeCategoryCombo);
+        noticeControlRow.add(categoryPanel, BorderLayout.EAST);
+        bottomContainer.add(noticeControlRow, BorderLayout.NORTH);
 
         // Input & Attachment Row
         JPanel inputRow = new JPanel(new BorderLayout(10, 0));
         inputRow.setOpaque(false);
 
         messageInputField = new JTextField();
-        messageInputField.setFont(new Font("Segoe UI", Font.PLAIN, 16));
-        messageInputField.setPreferredSize(new Dimension(messageInputField.getPreferredSize().width, 44));
+        messageInputField.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+        messageInputField.setPreferredSize(new Dimension(messageInputField.getPreferredSize().width, 42));
         messageInputField.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(new Color(203, 213, 225), 1, true),
-            BorderFactory.createEmptyBorder(6, 14, 6, 14)
+            BorderFactory.createEmptyBorder(6, 12, 6, 12)
         ));
         messageInputField.addActionListener(e -> sendMessage());
 
         JPanel rightButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         rightButtons.setOpaque(false);
 
-        // Attach File Button (PDF, PPT, Word, Images, etc.)
-        attachFileBtn = createModernButton("📎 Attach File", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 135, 44);
-        attachFileBtn.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        // Attach Academic Document Button (PDF, PPT, Word, etc.)
+        attachFileBtn = createModernButton("📎 Attach Document", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 155, 42);
+        attachFileBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         attachFileBtn.addActionListener(e -> selectAndSendFile());
 
-        sendBtn = createModernButton("Send", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 90, 44);
+        sendBtn = createModernButton("Post / Send", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 110, 42);
         sendBtn.addActionListener(e -> sendMessage());
 
         rightButtons.add(attachFileBtn);
@@ -486,14 +589,14 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         inputRow.add(rightButtons, BorderLayout.EAST);
         bottomContainer.add(inputRow, BorderLayout.CENTER);
 
-        // Live Technical Telemetry Bar
+        // Telemetry Bar
         JPanel telemetryBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 2));
         telemetryBar.setOpaque(false);
         JLabel telemetryLabel = new JLabel(
             "<html><font face='Segoe UI' size='2' color='#64748B'>" +
-            "🟢 <b>TCP Sockets</b>: Port 12345  •  " +
-            "⚡ <b>Concurrency</b>: ExecutorService  •  " +
-            "📁 <b>File Transfer</b>: Base64 Binary Stream  •  " +
+            "🟢 <b>Campus Intranet</b>: TCP Port 12345  •  " +
+            "⚡ <b>Multithreading</b>: ExecutorService  •  " +
+            "📁 <b>Document Transfer</b>: Base64 Binary Stream  •  " +
             "🗄️ <b>Database</b>: MySQL 8.0 JDBC" +
             "</font></html>"
         );
@@ -504,21 +607,25 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         return panel;
     }
 
-    private void updateTargetChip(boolean isBroadcast, String name) {
+    private void updateTargetControls(boolean isBroadcast, String name) {
         if (isBroadcast) {
-            targetIndicator.setText("🌐 Active Window: Everyone (Group Broadcast)");
+            targetIndicator.setText("📢 Active Channel: Faculty Notice Board (Broadcast to All Staff)");
             targetIndicator.setForeground(COLOR_PRIMARY);
+            noticeCategoryCombo.setEnabled(true);
+            sendBtn.setText("Post Notice");
         } else {
-            targetIndicator.setText("🔒 Private End-to-End Window with: " + name);
-            targetIndicator.setForeground(new Color(147, 51, 234));
+            targetIndicator.setText("🔒 Confidential Faculty Memo with: " + name);
+            targetIndicator.setForeground(new Color(124, 58, 237));
+            noticeCategoryCombo.setEnabled(false);
+            sendBtn.setText("Send Memo");
         }
     }
 
     // =========================================================================
-    // 3. CONVERSATION WINDOW WITH HTML CHAT BUBBLES
+    // 3. CONVERSATION WINDOW WITH RICH NOTICE CARDS
     // =========================================================================
     private class ConversationWindow {
-        final String targetUser; // null for group
+        final String targetUser; // null for Notice Board
         final String displayName;
         final JPanel containerPanel;
         final JEditorPane chatEditor;
@@ -540,8 +647,8 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             subHeader.setBorder(new EmptyBorder(6, 12, 6, 12));
 
             String headerLabelText = (targetUser == null) 
-                ? "🌐 Group Broadcast Channel (All Users)"
-                : "🔒 End-to-End Private Channel: " + displayName;
+                ? "📢 Official College Notice Board (Broadcast to All Staff)"
+                : "🔒 Confidential Faculty Memo: " + displayName;
             JLabel channelLabel = new JLabel(headerLabelText);
             channelLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
             channelLabel.setForeground(COLOR_TEXT_MAIN);
@@ -558,13 +665,13 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             subHeader.add(subActions, BorderLayout.EAST);
             containerPanel.add(subHeader, BorderLayout.NORTH);
 
-            // JEditorPane configured for HTML/CSS chat bubble rendering
+            // JEditorPane configured for HTML/CSS institutional notice rendering
             chatEditor = new JEditorPane();
             chatEditor.setContentType("text/html");
             chatEditor.setEditable(false);
             chatEditor.setBackground(new Color(248, 250, 252));
             chatEditor.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
-            chatEditor.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+            chatEditor.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             chatEditor.setText(HTML_HEADER + HTML_FOOTER);
 
             scrollPane = new JScrollPane(chatEditor);
@@ -573,7 +680,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         }
 
         String getTabTitle() {
-            return (targetUser == null) ? "🌐 Group Chat" : "🔒 " + displayName;
+            return (targetUser == null) ? "📢 Notice Board" : "🔒 " + displayName;
         }
 
         void appendHtmlRow(String rowHtml) {
@@ -598,7 +705,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         if (select && !win.isPoppedOut) {
             tabbedPane.setSelectedComponent(win.containerPanel);
             selectedTarget = win.targetUser;
-            updateTargetChip(win.targetUser == null, win.displayName);
+            updateTargetControls(win.targetUser == null, win.displayName);
         } else if (win.isPoppedOut && win.popOutFrame != null) {
             win.popOutFrame.toFront();
             win.popOutFrame.requestFocus();
@@ -612,15 +719,15 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             tabbedPane.remove(win.containerPanel);
             win.isPoppedOut = true;
 
-            JFrame frame = new JFrame("Private Chat: " + win.displayName);
-            frame.setSize(620, 540);
+            JFrame frame = new JFrame("Staff Memo: " + win.displayName);
+            frame.setSize(640, 560);
             frame.setLocationRelativeTo(this);
             frame.setLayout(new BorderLayout());
 
             JPanel popBottom = new JPanel(new BorderLayout(8, 0));
             popBottom.setBorder(new EmptyBorder(8, 10, 10, 10));
             JTextField popInput = new JTextField();
-            popInput.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+            popInput.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             popInput.setPreferredSize(new Dimension(200, 38));
 
             JPanel popRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
@@ -684,12 +791,11 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 4. FILE SHARING & ATTACHMENT LOGIC (PDF, PPT, WORD, IMAGES)
+    // 4. ACADEMIC DOCUMENT SHARING (PDF, PPT, WORD, EXCEL)
     // =========================================================================
-    
     private void selectAndSendFile() {
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Select File to Share (PDF, PPT, Word, Images, etc.)");
+        chooser.setDialogTitle("Select Academic Document to Dispatch (PDF, PPT, Word, Excel)");
         int res = chooser.showOpenDialog(this);
         if (res == JFileChooser.APPROVE_OPTION) {
             File selectedFile = chooser.getSelectedFile();
@@ -697,30 +803,29 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
             // 25MB check
             if (selectedFile.length() > 25 * 1024 * 1024) {
-                JOptionPane.showMessageDialog(this, "File is too large! Maximum limit is 25 MB.", "File Size Limit", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(this, "Document exceeds 25 MB limit.", "File Size Limit", JOptionPane.WARNING_MESSAGE);
                 return;
             }
 
-            String targetName = (selectedTarget == null || selectedTarget.equals(GROUP_TARGET)) 
-                ? "Everyone (Group Broadcast)" 
+            String targetName = (selectedTarget == null) 
+                ? "Faculty Notice Board (All Staff)" 
                 : selectedTarget;
 
-            String confirmMsg = "Send file:\n" + selectedFile.getName() + " (" + formatFileSize(selectedFile.length()) + ")\nto: " + targetName + "?";
-            int confirm = JOptionPane.showConfirmDialog(this, confirmMsg, "Confirm File Transfer", JOptionPane.YES_NO_OPTION);
+            String confirmMsg = "Dispatch document:\n" + selectedFile.getName() + " (" + formatFileSize(selectedFile.length()) + ")\nto: " + targetName + "?";
+            int confirm = JOptionPane.showConfirmDialog(this, confirmMsg, "Confirm Document Dispatch", JOptionPane.YES_NO_OPTION);
             if (confirm != JOptionPane.YES_OPTION) return;
 
-            // Read bytes and send on background thread
             new Thread(() -> {
                 try {
                     byte[] data = Files.readAllBytes(selectedFile.toPath());
-                    if (selectedTarget == null || selectedTarget.equals(GROUP_TARGET)) {
+                    if (selectedTarget == null) {
                         client.sendFileBroadcast(selectedFile.getName(), data);
                     } else {
                         client.sendFilePrivate(selectedTarget, selectedFile.getName(), data);
                     }
                 } catch (Exception ex) {
                     SwingUtilities.invokeLater(() -> {
-                        JOptionPane.showMessageDialog(ChatGUI.this, "Error reading file: " + ex.getMessage(), "Transfer Error", JOptionPane.ERROR_MESSAGE);
+                        JOptionPane.showMessageDialog(ChatGUI.this, "Error reading file: " + ex.getMessage(), "Dispatch Error", JOptionPane.ERROR_MESSAGE);
                     });
                 }
             }).start();
@@ -761,22 +866,22 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             if (Desktop.isDesktopSupported()) {
                 Desktop.getDesktop().open(dir);
             } else {
-                JOptionPane.showMessageDialog(this, "Downloads folder: " + dir.getAbsolutePath());
+                JOptionPane.showMessageDialog(this, "Staff Downloads location: " + dir.getAbsolutePath());
             }
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Downloads folder: " + dir.getAbsolutePath());
+            JOptionPane.showMessageDialog(this, "Staff Downloads location: " + dir.getAbsolutePath());
         }
     }
 
-    private String getFileIcon(String fileName) {
+    private String getDocumentTypeBadge(String fileName) {
         String lower = fileName.toLowerCase();
-        if (lower.endsWith(".pdf")) return "📕 PDF";
-        if (lower.endsWith(".ppt") || lower.endsWith(".pptx")) return "📊 PPT";
-        if (lower.endsWith(".doc") || lower.endsWith(".docx")) return "📘 DOC";
-        if (lower.endsWith(".xls") || lower.endsWith(".xlsx")) return "📗 XLS";
-        if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif")) return "🖼️ IMG";
-        if (lower.endsWith(".zip") || lower.endsWith(".rar")) return "📦 ZIP";
-        return "📁 FILE";
+        if (lower.endsWith(".pdf")) return "📕 Official Order / Circular (PDF)";
+        if (lower.endsWith(".ppt") || lower.endsWith(".pptx")) return "📊 Faculty Lecture / Presentation (PPT)";
+        if (lower.endsWith(".doc") || lower.endsWith(".docx")) return "📘 Notice / Duty Roster / Minutes (DOCX)";
+        if (lower.endsWith(".xls") || lower.endsWith(".xlsx")) return "📗 Grade Sheet / Attendance Register (XLSX)";
+        if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "🖼️ Academic Diagram / Photo (IMG)";
+        if (lower.endsWith(".zip") || lower.endsWith(".rar")) return "📦 Document Archive (ZIP)";
+        return "📁 Academic Document";
     }
 
     private String formatFileSize(long bytes) {
@@ -786,9 +891,8 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 5. HTML CHAT BUBBLE BUILDERS
+    // 5. HTML NOTICE CARD & CHAT BUBBLE RENDERING
     // =========================================================================
-
     private String escapeHtml(String text) {
         if (text == null) return "";
         return text.replace("&", "&amp;")
@@ -798,89 +902,113 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                    .replace("\n", "<br>");
     }
 
-    private String buildIncomingGroupBubble(String timestamp, String sender, String message) {
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
-               "<tr><td align='left'>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#FFFFFF; border:1px solid #E2E8F0;'>" +
-               "<tr><td>" +
-               "<font face='Segoe UI' size='3' color='#2563EB'><b>" + escapeHtml(sender) + "</b></font>" +
-               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<font face='Segoe UI' size='4' color='#1E293B'>" + escapeHtml(message) + "</font>" +
-               "</td></tr></table></td></tr></table>";
-    }
+    /**
+     * Builds categorized circular cards for Notice Board broadcasts.
+     */
+    private String buildNoticeBoardBubble(String timestamp, String sender, String rawMessage, boolean isOutgoing) {
+        String tag = "";
+        String badge = "";
+        String cardBg = isOutgoing ? "#EFF6FF" : "#FFFFFF";
+        String border = isOutgoing ? "#BFDBFE" : "#E2E8F0";
+        String content = rawMessage;
 
-    private String buildOutgoingGroupBubble(String timestamp, String message) {
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
-               "<tr><td align='right'>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#EEF2FF; border:1px solid #C7D2FE;'>" +
-               "<tr><td align='right'>" +
-               "<font face='Segoe UI' size='2' color='#4F46E5'><b>You</b></font>" +
-               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<font face='Segoe UI' size='4' color='#1E1B4B'>" + escapeHtml(message) + "</font>" +
+        if (rawMessage.startsWith("[URGENT]")) {
+            tag = "URGENT";
+            badge = "<span style='background-color:#DC2626; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>🚨 URGENT DIRECTIVE</span>";
+            cardBg = "#FEF2F2";
+            border = "#EF4444";
+            content = rawMessage.substring(8).trim();
+        } else if (rawMessage.startsWith("[MEETING]")) {
+            tag = "MEETING";
+            badge = "<span style='background-color:#D97706; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>📋 MEETING NOTICE / MoM</span>";
+            cardBg = "#FFFBEB";
+            border = "#F59E0B";
+            content = rawMessage.substring(9).trim();
+        } else if (rawMessage.startsWith("[EXAM]")) {
+            tag = "EXAM";
+            badge = "<span style='background-color:#2563EB; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>📝 EXAM CELL & ACADEMIC</span>";
+            cardBg = "#EFF6FF";
+            border = "#3B82F6";
+            content = rawMessage.substring(6).trim();
+        } else if (rawMessage.startsWith("[LAB]")) {
+            tag = "LAB";
+            badge = "<span style='background-color:#059669; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>🔬 LAB & INFRASTRUCTURE</span>";
+            cardBg = "#ECFDF5";
+            border = "#10B981";
+            content = rawMessage.substring(5).trim();
+        } else if (rawMessage.startsWith("[CIRCULAR]")) {
+            tag = "CIRCULAR";
+            badge = "<span style='background-color:#4F46E5; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>📢 OFFICIAL CIRCULAR</span>";
+            cardBg = "#EEF2FF";
+            border = "#6366F1";
+            content = rawMessage.substring(10).trim();
+        }
+
+        String senderLabel = isOutgoing ? "You (Staff)" : sender;
+        StaffItem staff = staffDirectory.get(sender.toLowerCase());
+        if (staff != null && !isOutgoing) {
+            senderLabel = staff.username + " [" + staff.designation + " - " + staff.department + "]";
+        }
+
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:10px;'>" +
+               "<tr><td>" +
+               "<table width='100%' cellpadding='10' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + "; border-left:5px solid " + border + ";'>" +
+               "<tr><td>" +
+               (badge.isEmpty() ? "" : badge + "&nbsp;&nbsp;") +
+               "<font face='Segoe UI' size='3' color='#1E293B'><b>" + escapeHtml(senderLabel) + "</b></font>" +
+               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;•&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
+               "<div style='margin-top:6px;'><font face='Segoe UI' size='4' color='#0F172A'>" + escapeHtml(content) + "</font></div>" +
                "</td></tr></table></td></tr></table>";
     }
 
     private String buildIncomingPrivateBubble(String timestamp, String sender, String message) {
+        StaffItem staff = staffDirectory.get(sender.toLowerCase());
+        String senderLabel = (staff != null) 
+            ? staff.username + " (" + staff.designation + ")" 
+            : sender;
+
         return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
                "<tr><td align='left'>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#FAF5FF; border:1px solid #E9D5FF;'>" +
+               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#FAF5FF; border:1px solid #E9D5FF; border-left:4px solid #7C3AED;'>" +
                "<tr><td>" +
-               "<font face='Segoe UI' size='3' color='#7C3AED'><b>🔒 " + escapeHtml(sender) + "</b></font>" +
+               "<font face='Segoe UI' size='3' color='#7C3AED'><b>🔒 Confidential Memo: " + escapeHtml(senderLabel) + "</b></font>" +
                "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<font face='Segoe UI' size='4' color='#1E293B'>" + escapeHtml(message) + "</font>" +
+               "<div style='margin-top:4px;'><font face='Segoe UI' size='4' color='#1E293B'>" + escapeHtml(message) + "</font></div>" +
                "</td></tr></table></td></tr></table>";
     }
 
     private String buildOutgoingPrivateBubble(String timestamp, String message) {
         return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
                "<tr><td align='right'>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#F0FDF4; border:1px solid #BBF7D0;'>" +
+               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#F0FDF4; border:1px solid #BBF7D0; border-right:4px solid #059669;'>" +
                "<tr><td align='right'>" +
-               "<font face='Segoe UI' size='2' color='#0D9488'><b>🔒 You</b></font>" +
+               "<font face='Segoe UI' size='2' color='#0D9488'><b>🔒 Confidential Memo Sent</b></font>" +
                "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<font face='Segoe UI' size='4' color='#064E3B'>" + escapeHtml(message) + "</font>" +
+               "<div style='margin-top:4px;' align='left'><font face='Segoe UI' size='4' color='#064E3B'>" + escapeHtml(message) + "</font></div>" +
                "</td></tr></table></td></tr></table>";
     }
 
-    private String buildIncomingFileBubble(String timestamp, String sender, String fileName, long size, boolean isPrivate) {
-        String icon = getFileIcon(fileName);
+    private String buildDocumentBubble(String timestamp, String sender, String fileName, long size, boolean isPrivate, boolean isOutgoing) {
+        String docType = getDocumentTypeBadge(fileName);
         String sizeStr = formatFileSize(size);
-        String cardBg = isPrivate ? "#FAF5FF" : "#FFFFFF";
-        String border = isPrivate ? "#E9D5FF" : "#E2E8F0";
-        String tag = isPrivate ? "🔒 " + sender : sender;
-        String tagColor = isPrivate ? "#7C3AED" : "#2563EB";
+        String cardBg = isOutgoing ? "#EFF6FF" : "#FFFFFF";
+        String border = isOutgoing ? "#93C5FD" : "#CBD5E1";
+        String titleTag = isOutgoing 
+            ? "Dispatched by You" 
+            : (isPrivate ? "🔒 Direct Dispatch: " + sender : "📢 Official Notice Board Attachment: " + sender);
 
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
-               "<tr><td align='left'>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + ";'>" +
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:10px;'>" +
+               "<tr><td align='" + (isOutgoing ? "right" : "left") + "'>" +
+               "<table cellpadding='10' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + "; min-width:320px;'>" +
                "<tr><td>" +
-               "<font face='Segoe UI' size='3' color='" + tagColor + "'><b>" + escapeHtml(tag) + "</b></font>" +
+               "<font face='Segoe UI' size='2' color='#2563EB'><b>" + escapeHtml(titleTag) + "</b></font>" +
                "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<table cellpadding='6' cellspacing='0' border='0' style='background-color:#F8FAFC; border:1px solid #CBD5E1; margin-top:4px;'>" +
-               "<tr><td width='40' align='center'><font face='Segoe UI' size='2' color='#4F46E5'><b>" + icon + "</b></font></td>" +
-               "<td><font face='Segoe UI' size='3' color='#1E293B'><b>" + escapeHtml(fileName) + "</b></font><br>" +
-               "<font face='Segoe UI' size='2' color='#10B981'><b>" + sizeStr + "</b> • Saved to downloads/</font></td></tr></table>" +
-               "</td></tr></table></td></tr></table>";
-    }
-
-    private String buildOutgoingFileBubble(String timestamp, String fileName, long size, boolean isPrivate) {
-        String icon = getFileIcon(fileName);
-        String sizeStr = formatFileSize(size);
-        String cardBg = isPrivate ? "#F0FDF4" : "#EEF2FF";
-        String border = isPrivate ? "#BBF7D0" : "#C7D2FE";
-        String tag = isPrivate ? "🔒 You" : "You";
-        String tagColor = isPrivate ? "#0D9488" : "#4F46E5";
-
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
-               "<tr><td align='right'>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + ";'>" +
-               "<tr><td align='right'>" +
-               "<font face='Segoe UI' size='2' color='" + tagColor + "'><b>" + escapeHtml(tag) + "</b></font>" +
-               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<table cellpadding='6' cellspacing='0' border='0' style='background-color:#FFFFFF; border:1px solid " + border + "; margin-top:4px;'>" +
-               "<tr><td width='40' align='center'><font face='Segoe UI' size='2' color='#4F46E5'><b>" + icon + "</b></font></td>" +
-               "<td align='left'><font face='Segoe UI' size='3' color='#1E1B4B'><b>" + escapeHtml(fileName) + "</b></font><br>" +
-               "<font face='Segoe UI' size='2' color='#10B981'><b>" + sizeStr + "</b> • Sent</font></td></tr></table>" +
+               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#F8FAFC; border:1px solid #E2E8F0; margin-top:6px; width:100%;'>" +
+               "<tr><td>" +
+               "<font face='Segoe UI' size='2' color='#475569'><b>" + escapeHtml(docType) + "</b></font><br>" +
+               "<font face='Segoe UI' size='3' color='#0F172A'><b>" + escapeHtml(fileName) + "</b></font><br>" +
+               "<font face='Segoe UI' size='2' color='#059669'><b>" + sizeStr + "</b> • Saved to downloads/ (Staff Archive)</font>" +
+               "</td></tr></table>" +
                "</td></tr></table></td></tr></table>";
     }
 
@@ -891,127 +1019,40 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                "</td></tr></table>";
     }
 
-    private String buildHistoryBubble(String timestamp, String sender, String message, boolean isMe) {
-        String bgColor = isMe ? "#FEF3C7" : "#FFFBEB";
-        String borderColor = isMe ? "#FDE68A" : "#FEF08A";
-        String align = isMe ? "right" : "left";
-        String tag = isMe ? "You (History)" : sender + " (History)";
-
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
-               "<tr><td align='" + align + "'>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:" + bgColor + "; border:1px solid " + borderColor + ";'>" +
-               "<tr><td align='" + align + "'>" +
-               "<font face='Segoe UI' size='2' color='#B45309'><b>📜 " + escapeHtml(tag) + "</b></font>" +
-               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<font face='Segoe UI' size='4' color='#1E293B'>" + escapeHtml(message) + "</font>" +
-               "</td></tr></table></td></tr></table>";
-    }
-
     private void sendMessage() {
-        String msg = messageInputField.getText().trim();
-        if (msg.isEmpty()) return;
+        String text = messageInputField.getText().trim();
+        if (text.isEmpty()) return;
 
-        if (selectedTarget == null || selectedTarget.equals(GROUP_TARGET)) {
-            client.sendBroadcast(msg);
+        if (selectedTarget == null) {
+            // Notice Board Broadcast with Category
+            String cat = (String) noticeCategoryCombo.getSelectedItem();
+            String prefix = "[CIRCULAR] ";
+            if (cat != null) {
+                if (cat.contains("Urgent")) prefix = "[URGENT] ";
+                else if (cat.contains("Meeting")) prefix = "[MEETING] ";
+                else if (cat.contains("Exam")) prefix = "[EXAM] ";
+                else if (cat.contains("Lab")) prefix = "[LAB] ";
+            }
+            client.sendBroadcast(prefix + text);
         } else {
-            client.sendPrivate(selectedTarget, msg);
+            // Confidential Private Memo
+            client.sendPrivate(selectedTarget, text);
         }
         messageInputField.setText("");
-        messageInputField.requestFocusInWindow();
-    }
-
-    private void handleExit() {
-        int confirm = JOptionPane.showConfirmDialog(
-            this,
-            "Are you sure you want to disconnect and exit?",
-            "Exit Chat Application",
-            JOptionPane.YES_NO_OPTION
-        );
-        if (confirm == JOptionPane.YES_OPTION) {
-            closeAllPoppedOutFrames();
-            client.disconnect();
-            dispose();
-            System.exit(0);
-        }
-    }
-
-    private static class ModernContactRenderer extends DefaultListCellRenderer {
-        @Override
-        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
-            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-            label.setBorder(new EmptyBorder(8, 12, 8, 12));
-            label.setFont(new Font("Segoe UI", Font.PLAIN, 15));
-
-            String text = String.valueOf(value);
-            if (isSelected) {
-                label.setBackground(new Color(238, 242, 255));
-                label.setForeground(new Color(49, 46, 129));
-            } else {
-                label.setBackground(Color.WHITE);
-                label.setForeground(COLOR_TEXT_MAIN);
-            }
-
-            if (text.contains(GROUP_TARGET)) {
-                label.setText("🌐  " + text);
-                label.setFont(new Font("Segoe UI", Font.BOLD, 14));
-            } else {
-                label.setText("●  " + text);
-            }
-            return label;
-        }
-    }
-
-    public static JButton createModernButton(String text, Color bgColor, Color hoverColor, Color fgColor, int width, int height) {
-        JButton btn = new JButton(text) {
-            @Override
-            protected void paintComponent(Graphics g) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                if (getModel().isPressed()) {
-                    g2.setColor(hoverColor.darker());
-                } else if (getModel().isRollover()) {
-                    g2.setColor(hoverColor);
-                } else {
-                    g2.setColor(bgColor);
-                }
-                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
-                g2.dispose();
-                super.paintComponent(g);
-            }
-        };
-        btn.setContentAreaFilled(false);
-        btn.setFocusPainted(false);
-        btn.setBorderPainted(false);
-        btn.setForeground(fgColor);
-        btn.setFont(new Font("Segoe UI", Font.BOLD, 14));
-        btn.setPreferredSize(new Dimension(width, height));
-        btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        return btn;
     }
 
     // =========================================================================
-    // 6. CHAT EVENT LISTENER CALLBACKS (SWING EDT SAFE)
+    // 6. CLIENT LISTENER CALLBACKS (Swing EDT Safe)
     // =========================================================================
-
     @Override
-    public void onLoginSuccess(String username) {
+    public void onLoginSuccess(String username, String department, String designation) {
         SwingUtilities.invokeLater(() -> {
-            currentUserLabel.setText(username);
-            userStatusLabel.setText("● Active Now  •  Port 12345");
-            setTitle("Java Sockets Chat Room - " + username);
-            authStatusLabel.setText("");
+            cardLayout.show(mainContainer, VIEW_CHAT);
+            currentUserLabel.setText("👤 " + username + "  •  " + designation + " (" + department + ")");
+            setTitle("JECRC StaffNet — " + username + " [" + designation + "]");
             loginBtn.setEnabled(true);
             registerBtn.setEnabled(true);
-
-            closeAllPoppedOutFrames();
-            conversations.clear();
-            tabbedPane.removeAll();
-
-            ConversationWindow global = getOrCreateConversation(null, "Group Chat", true);
-            global.appendHtmlRow(buildSystemNotice("Connected to Central Chat Server on TCP Port 12345"));
-
-            cardLayout.show(mainContainer, VIEW_CHAT);
-            messageInputField.requestFocusInWindow();
+            getOrCreateConversation(null, "Notice Board", true);
         });
     }
 
@@ -1028,11 +1069,10 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     @Override
     public void onRegisterSuccess(String message) {
         SwingUtilities.invokeLater(() -> {
-            authStatusLabel.setForeground(COLOR_ONLINE_GREEN);
+            authStatusLabel.setForeground(new Color(5, 150, 105));
             authStatusLabel.setText(message);
             loginBtn.setEnabled(true);
             registerBtn.setEnabled(true);
-            JOptionPane.showMessageDialog(this, message, "Registration Success", JOptionPane.INFORMATION_MESSAGE);
         });
     }
 
@@ -1049,13 +1089,9 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     @Override
     public void onBroadcastReceived(String timestamp, String sender, String message) {
         SwingUtilities.invokeLater(() -> {
-            ConversationWindow global = getOrCreateConversation(null, "Group Chat", false);
-            String me = client.getCurrentUsername();
-            if (me != null && sender.equalsIgnoreCase(me)) {
-                global.appendHtmlRow(buildOutgoingGroupBubble(timestamp, message));
-            } else {
-                global.appendHtmlRow(buildIncomingGroupBubble(timestamp, sender, message));
-            }
+            ConversationWindow win = getOrCreateConversation(null, "Notice Board", false);
+            boolean isMe = sender.equalsIgnoreCase(client.getCurrentUsername());
+            win.appendHtmlRow(buildNoticeBoardBubble(timestamp, sender, message, isMe));
         });
     }
 
@@ -1064,11 +1100,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         SwingUtilities.invokeLater(() -> {
             ConversationWindow win = getOrCreateConversation(sender, sender, false);
             win.appendHtmlRow(buildIncomingPrivateBubble(timestamp, sender, message));
-
-            int idx = tabbedPane.indexOfComponent(win.containerPanel);
-            if (idx != -1 && tabbedPane.getSelectedIndex() != idx) {
-                tabbedPane.setTitleAt(idx, "🔒 " + sender + " (●)");
-            }
         });
     }
 
@@ -1080,92 +1111,56 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         });
     }
 
-    // --- File Sharing Callbacks ---
-
-    @Override
-    public void onFileBroadcastReceived(String timestamp, String sender, String fileName, byte[] fileData) {
-        SwingUtilities.invokeLater(() -> {
-            saveReceivedFile(fileName, fileData);
-            ConversationWindow global = getOrCreateConversation(null, "Group Chat", false);
-            String me = client.getCurrentUsername();
-            if (me != null && sender.equalsIgnoreCase(me)) {
-                global.appendHtmlRow(buildOutgoingFileBubble(timestamp, fileName, fileData.length, false));
-            } else {
-                global.appendHtmlRow(buildIncomingFileBubble(timestamp, sender, fileName, fileData.length, false));
-            }
-        });
-    }
-
-    @Override
-    public void onFilePrivateReceived(String timestamp, String sender, String fileName, byte[] fileData) {
-        SwingUtilities.invokeLater(() -> {
-            saveReceivedFile(fileName, fileData);
-            ConversationWindow win = getOrCreateConversation(sender, sender, false);
-            win.appendHtmlRow(buildIncomingFileBubble(timestamp, sender, fileName, fileData.length, true));
-
-            int idx = tabbedPane.indexOfComponent(win.containerPanel);
-            if (idx != -1 && tabbedPane.getSelectedIndex() != idx) {
-                tabbedPane.setTitleAt(idx, "🔒 " + sender + " (●)");
-            }
-        });
-    }
-
-    @Override
-    public void onFilePrivateSent(String timestamp, String recipient, String fileName, byte[] fileData) {
-        SwingUtilities.invokeLater(() -> {
-            saveReceivedFile(fileName, fileData);
-            ConversationWindow win = getOrCreateConversation(recipient, recipient, false);
-            win.appendHtmlRow(buildOutgoingFileBubble(timestamp, fileName, fileData.length, true));
-        });
-    }
-
     @Override
     public void onSystemMessage(String timestamp, String message) {
         SwingUtilities.invokeLater(() -> {
-            ConversationWindow global = getOrCreateConversation(null, "Group Chat", false);
-            global.appendHtmlRow(buildSystemNotice(message));
+            ConversationWindow win = getOrCreateConversation(null, "Notice Board", false);
+            win.appendHtmlRow(buildSystemNotice(message));
         });
     }
 
     @Override
-    public void onUserListUpdated(List<String> users) {
+    public void onUserListUpdated(List<String> rawUsers) {
         SwingUtilities.invokeLater(() -> {
-            String currentSelection = userJList.getSelectedValue();
             userListModel.clear();
-            userListModel.addElement(GROUP_TARGET);
+            staffDirectory.clear();
 
-            String me = client.getCurrentUsername();
-            for (String u : users) {
-                if (me != null && u.equalsIgnoreCase(me)) {
-                    userListModel.addElement(u + " (You)");
-                } else {
-                    userListModel.addElement(u);
-                }
-            }
+            // Always add Notice Board at top
+            StaffItem noticeBoard = new StaffItem("ALL", "College-wide", "Notice Board", true);
+            userListModel.addElement(noticeBoard);
 
-            if (contactsCountLabel != null) {
-                contactsCountLabel.setText(users.size() + " online");
-            }
+            int count = 0;
+            for (String raw : rawUsers) {
+                if (raw == null || raw.trim().isEmpty()) continue;
+                String[] parts = raw.split(":");
+                String u = parts[0].trim();
+                String dep = (parts.length >= 2) ? parts[1].trim() : "General";
+                String des = (parts.length >= 3) ? parts[2].trim() : "Faculty";
 
-            if (currentSelection != null && userListModel.contains(currentSelection)) {
-                userJList.setSelectedValue(currentSelection, true);
+                StaffItem staff = new StaffItem(u, dep, des, false);
+                staffDirectory.put(u.toLowerCase(), staff);
+                userListModel.addElement(staff);
+                count++;
             }
+            contactsCountLabel.setText(count + " staff active");
         });
     }
 
     @Override
     public void onHistoryMessage(String timestamp, String sender, String receiver, String message) {
         SwingUtilities.invokeLater(() -> {
-            String me = client.getCurrentUsername();
-            boolean isMe = (me != null && sender.equalsIgnoreCase(me));
-
             if ("ALL".equalsIgnoreCase(receiver)) {
-                ConversationWindow global = getOrCreateConversation(null, "Group Chat", false);
-                global.appendHtmlRow(buildHistoryBubble(timestamp, sender, message, isMe));
+                ConversationWindow win = getOrCreateConversation(null, "Notice Board", false);
+                boolean isMe = sender.equalsIgnoreCase(client.getCurrentUsername());
+                win.appendHtmlRow(buildNoticeBoardBubble(timestamp, sender, message, isMe));
             } else {
-                String peer = isMe ? receiver : sender;
-                ConversationWindow win = getOrCreateConversation(peer, peer, false);
-                win.appendHtmlRow(buildHistoryBubble(timestamp, sender, message, isMe));
+                String partner = sender.equalsIgnoreCase(client.getCurrentUsername()) ? receiver : sender;
+                ConversationWindow win = getOrCreateConversation(partner, partner, false);
+                if (sender.equalsIgnoreCase(client.getCurrentUsername())) {
+                    win.appendHtmlRow(buildOutgoingPrivateBubble(timestamp, message));
+                } else {
+                    win.appendHtmlRow(buildIncomingPrivateBubble(timestamp, sender, message));
+                }
             }
         });
     }
@@ -1173,14 +1168,42 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     @Override
     public void onHistoryDone() {
         SwingUtilities.invokeLater(() -> {
-            for (ConversationWindow win : conversations.values()) {
-                win.appendHtmlRow(
-                    "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:10px 0;'>" +
-                    "<tr><td align='center'>" +
-                    "<font face='Segoe UI' size='2' color='#D97706'><b>──────── 📜 Historical Messages Restored from MySQL ────────</b></font>" +
-                    "</td></tr></table>"
-                );
-            }
+            ConversationWindow win = getOrCreateConversation(null, "Notice Board", false);
+            win.appendHtmlRow(buildSystemNotice("Staff history synchronized with MySQL database"));
+        });
+    }
+
+    @Override
+    public void onFileBroadcastReceived(String timestamp, String sender, String fileName, byte[] fileData) {
+        File saved = saveReceivedFile(fileName, fileData);
+        long size = (saved != null) ? saved.length() : fileData.length;
+        boolean isMe = sender.equalsIgnoreCase(client.getCurrentUsername());
+
+        SwingUtilities.invokeLater(() -> {
+            ConversationWindow win = getOrCreateConversation(null, "Notice Board", false);
+            win.appendHtmlRow(buildDocumentBubble(timestamp, sender, fileName, size, false, isMe));
+        });
+    }
+
+    @Override
+    public void onFilePrivateReceived(String timestamp, String sender, String fileName, byte[] fileData) {
+        File saved = saveReceivedFile(fileName, fileData);
+        long size = (saved != null) ? saved.length() : fileData.length;
+
+        SwingUtilities.invokeLater(() -> {
+            ConversationWindow win = getOrCreateConversation(sender, sender, false);
+            win.appendHtmlRow(buildDocumentBubble(timestamp, sender, fileName, size, true, false));
+        });
+    }
+
+    @Override
+    public void onFilePrivateSent(String timestamp, String recipient, String fileName, byte[] fileData) {
+        File saved = saveReceivedFile(fileName, fileData);
+        long size = (saved != null) ? saved.length() : fileData.length;
+
+        SwingUtilities.invokeLater(() -> {
+            ConversationWindow win = getOrCreateConversation(recipient, recipient, false);
+            win.appendHtmlRow(buildDocumentBubble(timestamp, recipient, fileName, size, true, true));
         });
     }
 
@@ -1190,16 +1213,97 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             closeAllPoppedOutFrames();
             cardLayout.show(mainContainer, VIEW_LOGIN);
             authStatusLabel.setForeground(COLOR_LOGOUT_RED);
-            authStatusLabel.setText(reason);
+            authStatusLabel.setText("Disconnected from server: " + reason);
             loginBtn.setEnabled(true);
             registerBtn.setEnabled(true);
         });
     }
 
+    // =========================================================================
+    // 7. CUSTOM SWING HELPERS & RENDERERS
+    // =========================================================================
+    private JButton createModernButton(String text, Color bg, Color hoverBg, Color fg, int width, int height) {
+        JButton btn = new JButton(text) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(getModel().isRollover() ? hoverBg : bg);
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        btn.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        btn.setForeground(fg);
+        btn.setPreferredSize(new Dimension(width, height));
+        btn.setFocusPainted(false);
+        btn.setBorderPainted(false);
+        btn.setContentAreaFilled(false);
+        btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        return btn;
+    }
+
+    /**
+     * Custom ListCellRenderer for the College Staff Directory sidebar.
+     */
+    private class StaffDirectoryCellRenderer extends DefaultListCellRenderer {
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+            JPanel p = new JPanel(new BorderLayout(6, 2));
+            p.setBorder(new EmptyBorder(6, 10, 6, 10));
+
+            if (isSelected) {
+                p.setBackground(new Color(238, 242, 255));
+            } else {
+                p.setBackground(Color.WHITE);
+            }
+
+            if (value instanceof StaffItem) {
+                StaffItem item = (StaffItem) value;
+                if (item.isNoticeBoard) {
+                    JLabel title = new JLabel("📢 Faculty Notice Board");
+                    title.setFont(new Font("Segoe UI", Font.BOLD, 13));
+                    title.setForeground(COLOR_PRIMARY);
+
+                    JLabel sub = new JLabel("All Departments & Faculty");
+                    sub.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+                    sub.setForeground(new Color(100, 116, 139));
+
+                    JPanel col = new JPanel();
+                    col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
+                    col.setOpaque(false);
+                    col.add(title);
+                    col.add(sub);
+                    p.add(col, BorderLayout.CENTER);
+                } else {
+                    String me = client.getCurrentUsername();
+                    boolean isMe = (me != null && item.username.equalsIgnoreCase(me));
+                    String label = "● " + item.username + (isMe ? " (You)" : "");
+
+                    JLabel name = new JLabel(label);
+                    name.setFont(new Font("Segoe UI", Font.BOLD, 13));
+                    name.setForeground(isMe ? COLOR_PRIMARY : COLOR_TEXT_MAIN);
+
+                    JLabel meta = new JLabel(item.designation + " • " + item.department);
+                    meta.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+                    meta.setForeground(new Color(100, 116, 139));
+
+                    JPanel col = new JPanel();
+                    col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
+                    col.setOpaque(false);
+                    col.add(name);
+                    col.add(meta);
+                    p.add(col, BorderLayout.CENTER);
+                }
+            }
+            return p;
+        }
+    }
+
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            ChatGUI gui = new ChatGUI();
-            gui.setVisible(true);
+            new ChatGUI().setVisible(true);
         });
     }
 }

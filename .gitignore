@@ -10,3 +10,6 @@ db.properties
 *.iml
 .DS_Store
 Thumbs.db
+
+# Received downloads
+downloads/

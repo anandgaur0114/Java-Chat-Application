@@ -10,51 +10,54 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * ChatServer is the central multi-threaded server application.
+ * ChatServer is the central multi-threaded server application
+ * for JECRC StaffNet (College Staff Information & Circular Distribution System).
  * Demonstrates:
  *  - java.net.ServerSocket listening on TCP port
  *  - java.util.concurrent.ExecutorService thread pooling
- *  - java.util.concurrent.ConcurrentHashMap for thread-safe client tracking
- *  - Centralized message routing (Broadcast and 1-to-1 Private)
+ *  - java.util.concurrent.ConcurrentHashMap for thread-safe active staff tracking
+ *  - Institutional circular routing (Broadcast Notice Board and 1-to-1 Staff Memos)
+ *  - Academic file and document transfer dispatching
  */
 public class ChatServer {
 
     public static final int PORT = 12345;
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
 
-    // Thread-safe collection of currently online clients: <Username, ClientHandler>
+    // Thread-safe collection of currently online staff: <Username, ClientHandler>
     private static final ConcurrentHashMap<String, ClientHandler> onlineClients = new ConcurrentHashMap<>();
 
-    // Cached thread pool that dynamically allocates threads for connected clients
+    // Cached thread pool that dynamically allocates threads for connected staff workstations
     private static final ExecutorService threadPool = Executors.newCachedThreadPool();
 
     public static void main(String[] args) {
         System.out.println("=================================================");
-        System.out.println("       CORE JAVA CHAT SERVER (JDK 25)            ");
+        System.out.println("   JECRC STAFFNET: CAMPUS INTRANET SERVER (JDK 25)");
+        System.out.println("   Faculty Information & Circular Distribution");
         System.out.println("=================================================");
 
-        // 1. Verify Database Connectivity
-        System.out.println("[Server] Testing database connection via JDBC...");
+        // 1. Verify Database Connectivity & Initialize Staff Schema
+        System.out.println("[Server] Connecting to MySQL database via JDBC...");
         if (DBHandler.testConnection()) {
             System.out.println("[Server] Database connection OK! (MySQL 8.0 / Connector/J 9.7.0)");
+            DBHandler.initializeStaffSystem();
         } else {
             System.err.println("[Server] WARNING: Could not connect to MySQL! Please verify that:");
             System.err.println("         1. MySQL Server service is running.");
-            System.err.println("         2. Database 'chatapp_db' was created with schema.sql.");
-            System.err.println("         3. Credentials in DBHandler.java match your MySQL configuration.");
+            System.err.println("         2. Database 'chatapp_db' exists (or run schema.sql).");
+            System.err.println("         3. Credentials in db.properties match your MySQL root setup.");
         }
 
         // 2. Start TCP ServerSocket
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            System.out.println("[Server] Listening for client connections on TCP port: " + PORT);
-            System.out.println("[Server] Ready to accept incoming clients...\n");
+            System.out.println("[Server] Campus Intranet Socket listening on TCP Port: " + PORT);
+            System.out.println("[Server] Ready to dispatch faculty notices and confidential memos...\n");
 
-            // Server loop: continuously accepts incoming connections
+            // Server loop: continuously accepts incoming connections from staff clients
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                System.out.println("[Server] New connection from: " + clientSocket.getRemoteSocketAddress());
+                System.out.println("[Server] Incoming staff connection from: " + clientSocket.getRemoteSocketAddress());
 
-                // Assign each client to a worker thread from the thread pool
                 ClientHandler handler = new ClientHandler(clientSocket);
                 threadPool.execute(handler);
             }
@@ -67,43 +70,39 @@ public class ChatServer {
     }
 
     /**
-     * Checks if a user is currently logged in.
+     * Checks if a staff user is currently logged in.
      */
     public static boolean isUserOnline(String username) {
         return onlineClients.containsKey(username.toLowerCase());
     }
 
     /**
-     * Registers an authenticated client into active sessions.
+     * Registers an authenticated staff member into active intranet sessions.
      */
     public static synchronized void registerClient(String username, ClientHandler handler) {
         onlineClients.put(username.toLowerCase(), handler);
-        System.out.println("[Server] User logged in: " + username + " (Total online: " + onlineClients.size() + ")");
+        System.out.println("[Server] Staff member logged in: " + username + " [" + handler.getDesignation() + ", " + handler.getDepartment() + "] (Online staff: " + onlineClients.size() + ")");
 
-        // Notify all clients of updated online users
         broadcastUserList();
-
-        // Broadcast system notification
-        broadcastSystemMessage("User '" + username + "' has joined the chat.");
+        broadcastSystemMessage("Staff member '" + username + "' (" + handler.getDesignation() + ") is now online on StaffNet.");
     }
 
     /**
-     * Unregisters a client on disconnect or logout.
+     * Unregisters a staff member on disconnect or logout.
      */
     public static synchronized void unregisterClient(String username) {
-        if (username != null && onlineClients.remove(username.toLowerCase()) != null) {
-            System.out.println("[Server] User logged out: " + username + " (Total online: " + onlineClients.size() + ")");
-
-            // Broadcast updated user list
-            broadcastUserList();
-
-            // Broadcast system notification
-            broadcastSystemMessage("User '" + username + "' has left the chat.");
+        if (username != null) {
+            ClientHandler removed = onlineClients.remove(username.toLowerCase());
+            if (removed != null) {
+                System.out.println("[Server] Staff member logged out: " + username + " (Online staff: " + onlineClients.size() + ")");
+                broadcastUserList();
+                broadcastSystemMessage("Staff member '" + username + "' has signed off from StaffNet.");
+            }
         }
     }
 
     /**
-     * Broadcasts a group message to all online clients and saves it to MySQL.
+     * Broadcasts an official circular or notice to all online staff and saves it in MySQL.
      */
     public static void broadcastMessage(String sender, String message) {
         String timestamp = LocalTime.now().format(TIME_FORMATTER);
@@ -111,7 +110,7 @@ public class ChatServer {
         // 1. Persist in MySQL database (receiver = 'ALL')
         DBHandler.saveMessage(sender, "ALL", message);
 
-        // 2. Send over socket to all active clients
+        // 2. Send over socket to all active staff clients
         String protocolMsg = "MSG|" + timestamp + "|" + sender + "|" + message;
         for (ClientHandler client : onlineClients.values()) {
             client.sendMessage(protocolMsg);
@@ -119,9 +118,7 @@ public class ChatServer {
     }
 
     /**
-     * Sends a 1-to-1 private message.
-     * Persists in DB and routes to recipient and sender.
-     * @return true if recipient is online, false otherwise.
+     * Sends a 1-to-1 confidential staff memo between two faculty members.
      */
     public static boolean sendPrivateMessage(String sender, String receiver, String message) {
         String timestamp = LocalTime.now().format(TIME_FORMATTER);
@@ -129,7 +126,7 @@ public class ChatServer {
         // 1. Persist in MySQL database
         DBHandler.saveMessage(sender, receiver, message);
 
-        // 2. Locate recipient in online client registry
+        // 2. Locate recipient in online staff registry
         ClientHandler recipientHandler = onlineClients.get(receiver.toLowerCase());
         boolean isRecipientOnline = (recipientHandler != null);
 
@@ -137,12 +134,12 @@ public class ChatServer {
             recipientHandler.sendMessage("PRIV_MSG|" + timestamp + "|" + sender + "|" + message);
         }
 
-        // Echo back to sender for confirmation in their chat window
+        // Echo back to sender for confirmation
         ClientHandler senderHandler = onlineClients.get(sender.toLowerCase());
         if (senderHandler != null) {
             senderHandler.sendMessage("PRIV_SENT|" + timestamp + "|" + receiver + "|" + message);
             if (!isRecipientOnline) {
-                senderHandler.sendMessage("SYS_MSG|" + timestamp + "|[INFO] " + receiver + " is offline, but will see your message in history.");
+                senderHandler.sendMessage("SYS_MSG|" + timestamp + "|[INFO] " + receiver + " is currently offline. Your memo was saved to MySQL history.");
             }
         }
 
@@ -150,7 +147,7 @@ public class ChatServer {
     }
 
     /**
-     * Broadcasts a file attachment to all connected clients and logs it in MySQL.
+     * Broadcasts an official document attachment (PDF, PPT, Word) to all staff.
      */
     public static void broadcastFile(String sender, String fileName, String base64Data) {
         String timestamp = LocalTime.now().format(TIME_FORMATTER);
@@ -163,7 +160,7 @@ public class ChatServer {
     }
 
     /**
-     * Sends a private file attachment to a specific recipient.
+     * Sends a confidential file attachment directly to a specific staff member.
      */
     public static boolean sendPrivateFile(String sender, String receiver, String fileName, String base64Data) {
         String timestamp = LocalTime.now().format(TIME_FORMATTER);
@@ -180,7 +177,7 @@ public class ChatServer {
         if (senderHandler != null) {
             senderHandler.sendMessage("FILE_PRIV_SENT|" + timestamp + "|" + receiver + "|" + fileName + "|" + base64Data);
             if (!isRecipientOnline) {
-                senderHandler.sendMessage("SYS_MSG|" + timestamp + "|[INFO] " + receiver + " is offline, file was logged.");
+                senderHandler.sendMessage("SYS_MSG|" + timestamp + "|[INFO] " + receiver + " is offline. File transfer was recorded.");
             }
         }
 
@@ -188,7 +185,7 @@ public class ChatServer {
     }
 
     /**
-     * Broadcasts the current list of online users to all clients.
+     * Broadcasts the current directory of active online staff members with departments and designations.
      */
     public static void broadcastUserList() {
         StringBuilder sb = new StringBuilder("USER_LIST|");
@@ -197,7 +194,10 @@ public class ChatServer {
             if (!first) {
                 sb.append(",");
             }
-            sb.append(client.getUsername());
+            String u = client.getUsername().replace(":", "-").replace(",", " ");
+            String dep = client.getDepartment().replace(":", "-").replace(",", " ");
+            String des = client.getDesignation().replace(":", "-").replace(",", " ");
+            sb.append(u).append(":").append(dep).append(":").append(des);
             first = false;
         }
         String listMessage = sb.toString();
@@ -208,7 +208,7 @@ public class ChatServer {
     }
 
     /**
-     * Broadcasts a server-level notification (e.g. joins, leaves).
+     * Broadcasts an institutional server-level notification to all clients.
      */
     public static void broadcastSystemMessage(String text) {
         String timestamp = LocalTime.now().format(TIME_FORMATTER);

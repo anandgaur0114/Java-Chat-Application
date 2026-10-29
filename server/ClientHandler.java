@@ -10,12 +10,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * ClientHandler manages communication with an individual connected client.
+ * ClientHandler manages communication with an individual connected college staff member.
  * Demonstrates:
  *  - java.lang.Runnable for multi-threaded concurrency
  *  - Socket I/O streaming using BufferedReader and PrintWriter (UTF-8)
  *  - Protocol parsing and command routing
- *  - State tracking (unauthenticated vs authenticated)
+ *  - Staff authentication and role/department tracking
  *  - Clean disconnection handling
  */
 public class ClientHandler implements Runnable {
@@ -24,6 +24,8 @@ public class ClientHandler implements Runnable {
     private BufferedReader in;
     private PrintWriter out;
     private String username;
+    private String department = "Computer Science & Engineering";
+    private String designation = "Assistant Professor";
     private boolean isAuthenticated = false;
 
     public ClientHandler(Socket socket) {
@@ -34,15 +36,21 @@ public class ClientHandler implements Runnable {
         return username;
     }
 
+    public String getDepartment() {
+        return department;
+    }
+
+    public String getDesignation() {
+        return designation;
+    }
+
     @Override
     public void run() {
         try {
-            // Set up character-based I/O streams with UTF-8 encoding
             in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
             out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
 
             String clientLine;
-            // Read lines until client disconnects or socket closes
             while ((clientLine = in.readLine()) != null) {
                 clientLine = clientLine.trim();
                 if (clientLine.isEmpty()) {
@@ -56,8 +64,7 @@ public class ClientHandler implements Runnable {
                 }
             }
         } catch (IOException e) {
-            // Socket reset or unexpected client drop
-            System.out.println("[ClientHandler] Connection terminated for " + (username != null ? username : "unauthenticated client"));
+            System.out.println("[ClientHandler] Connection closed for " + (username != null ? username : "unauthenticated client"));
         } finally {
             cleanup();
         }
@@ -76,25 +83,23 @@ public class ClientHandler implements Runnable {
                     String user = parts[1].trim();
                     String pass = parts[2].trim();
 
-                    // Check if already online
                     if (ChatServer.isUserOnline(user)) {
-                        sendMessage("LOGIN_FAIL|User '" + user + "' is already logged in elsewhere.");
+                        sendMessage("LOGIN_FAIL|Staff user '" + user + "' is already logged in elsewhere on campus.");
                         return;
                     }
 
-                    // Authenticate with MySQL database
                     if (DBHandler.authenticateUser(user, pass)) {
-                        this.username = user;
+                        DBHandler.StaffProfile profile = DBHandler.getStaffProfile(user);
+                        this.username = profile.username;
+                        this.department = profile.department;
+                        this.designation = profile.designation;
                         this.isAuthenticated = true;
-                        sendMessage("LOGIN_SUCCESS|" + user);
 
-                        // Register with the server
+                        sendMessage("LOGIN_SUCCESS|" + user + "|" + profile.department + "|" + profile.designation);
                         ChatServer.registerClient(user, this);
-
-                        // Send historical messages to client
                         sendChatHistory(user);
                     } else {
-                        sendMessage("LOGIN_FAIL|Invalid username or password.");
+                        sendMessage("LOGIN_FAIL|Invalid staff credentials. Please check your username and password.");
                     }
                 } else {
                     sendMessage("LOGIN_FAIL|Malformed LOGIN request.");
@@ -102,19 +107,22 @@ public class ClientHandler implements Runnable {
                 break;
 
             case "REGISTER":
-                if (parts.length >= 3) {
-                    String user = parts[1].trim();
-                    String pass = parts[2].trim();
+                String[] regParts = commandLine.split("\\|", 5);
+                if (regParts.length >= 3) {
+                    String user = regParts[1].trim();
+                    String pass = regParts[2].trim();
+                    String dept = (regParts.length >= 4 && !regParts[3].trim().isEmpty()) ? regParts[3].trim() : "Computer Science & AI";
+                    String desig = (regParts.length >= 5 && !regParts[4].trim().isEmpty()) ? regParts[4].trim() : "Assistant Professor";
 
                     if (user.isEmpty() || pass.isEmpty()) {
                         sendMessage("REG_FAIL|Username and password cannot be empty.");
                         return;
                     }
 
-                    if (DBHandler.registerUser(user, pass)) {
-                        sendMessage("REG_SUCCESS|Registration successful! You can now log in.");
+                    if (DBHandler.registerUser(user, pass, dept, desig, "FACULTY")) {
+                        sendMessage("REG_SUCCESS|Staff registration successful! You can now log into StaffNet.");
                     } else {
-                        sendMessage("REG_FAIL|Username already taken or database unavailable.");
+                        sendMessage("REG_FAIL|Staff username already registered or database unavailable.");
                     }
                 } else {
                     sendMessage("REG_FAIL|Malformed REGISTER request.");
@@ -128,7 +136,7 @@ public class ClientHandler implements Runnable {
     }
 
     /**
-     * Streams previous chat history from MySQL to the newly logged-in user.
+     * Streams previous notices and confidential memos from MySQL to the logged-in staff member.
      */
     private void sendChatHistory(String user) {
         List<DBHandler.HistoryRecord> history = DBHandler.getChatHistory(user);
@@ -139,7 +147,7 @@ public class ClientHandler implements Runnable {
     }
 
     /**
-     * Processes messages and chat commands for an authenticated user.
+     * Processes official notice broadcasts and confidential memos.
      */
     private void handleChatProtocol(String commandLine) {
         if (commandLine.startsWith("FILE_BROADCAST|")) {
@@ -167,20 +175,24 @@ public class ClientHandler implements Runnable {
         switch (action) {
             case "BROADCAST":
                 if (parts.length >= 2) {
-                    String text = parts[1];
-                    ChatServer.broadcastMessage(username, text);
+                    String message = parts[1];
+                    ChatServer.broadcastMessage(username, message);
                 }
                 break;
 
             case "PRIVATE":
                 if (parts.length >= 3) {
                     String recipient = parts[1].trim();
-                    String text = parts[2];
+                    String message = parts[2];
+
                     if (recipient.equalsIgnoreCase(username)) {
-                        sendMessage("SYS_MSG|SYSTEM|You cannot send private messages to yourself.");
-                    } else {
-                        ChatServer.sendPrivateMessage(username, recipient, text);
+                        sendMessage("SYS_MSG|Cannot send confidential memo to yourself.");
+                        return;
                     }
+
+                    ChatServer.sendPrivateMessage(username, recipient, message);
+                } else {
+                    sendMessage("SYS_MSG|Invalid confidential memo format.");
                 }
                 break;
 
@@ -194,29 +206,22 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    /**
-     * Sends a raw line formatted in protocol syntax to this client.
-     */
-    public synchronized void sendMessage(String msg) {
+    public void sendMessage(String msg) {
         if (out != null) {
             out.println(msg);
         }
     }
 
-    /**
-     * Closes socket resources cleanly and unregisters client from server.
-     */
     private void cleanup() {
-        if (isAuthenticated && username != null) {
-            ChatServer.unregisterClient(username);
-            isAuthenticated = false;
-        }
         try {
+            if (isAuthenticated && username != null) {
+                ChatServer.unregisterClient(username);
+            }
             if (in != null) in.close();
-        } catch (IOException ignored) {}
-        if (out != null) out.close();
-        try {
+            if (out != null) out.close();
             if (socket != null && !socket.isClosed()) socket.close();
-        } catch (IOException ignored) {}
+        } catch (IOException e) {
+            System.err.println("[ClientHandler] Error during cleanup: " + e.getMessage());
+        }
     }
 }

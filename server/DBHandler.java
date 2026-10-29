@@ -10,18 +10,21 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
 /**
- * DBHandler handles all JDBC interactions with the MySQL database.
+ * DBHandler manages all JDBC interactions with the MySQL database
+ * for the JECRC College Staff Information & Circular Distribution System.
  * Demonstrates:
  *  - External configuration via Properties file with sensible defaults
- *  - JDBC Driver loading and Connection management
+ *  - Staff Profile schema migration (Department, Designation, Roles)
+ *  - Pre-seeding institutional staff accounts and official circular notices
  *  - PreparedStatements to prevent SQL Injection
  *  - SHA-256 Hashing for secure password storage
- *  - Query execution and ResultSet processing
+ *  - Query execution, transactions, and ResultSet processing
  */
 public class DBHandler {
 
@@ -30,7 +33,7 @@ public class DBHandler {
     private static String dbUser = "root";
     private static String dbPassword = "root";
 
-    // Static initializer: load driver and optional db.properties
+    // Static initializer: load driver, optional db.properties, and initialize schema
     static {
         // 1. Load configuration from db.properties if present
         loadConfig();
@@ -86,6 +89,74 @@ public class DBHandler {
     }
 
     /**
+     * Auto-migrates schema to ensure staff columns exist (Department, Designation, Role)
+     * and seeds default faculty accounts and official notices.
+     */
+    public static void initializeStaffSystem() {
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            // 1. Create tables if not exist
+            stmt.executeUpdate(
+                "CREATE TABLE IF NOT EXISTS users (" +
+                "id INT AUTO_INCREMENT PRIMARY KEY, " +
+                "username VARCHAR(50) NOT NULL UNIQUE, " +
+                "password_hash VARCHAR(255) NOT NULL, " +
+                "department VARCHAR(100) DEFAULT 'Computer Science & Engineering', " +
+                "designation VARCHAR(100) DEFAULT 'Assistant Professor', " +
+                "role VARCHAR(30) DEFAULT 'FACULTY', " +
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+            );
+
+            stmt.executeUpdate(
+                "CREATE TABLE IF NOT EXISTS messages (" +
+                "id INT AUTO_INCREMENT PRIMARY KEY, " +
+                "sender VARCHAR(50) NOT NULL, " +
+                "receiver VARCHAR(50) NOT NULL, " +
+                "message TEXT NOT NULL, " +
+                "timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                "INDEX idx_sender (sender), " +
+                "INDEX idx_receiver (receiver), " +
+                "INDEX idx_timestamp (timestamp))"
+            );
+
+            // 2. Safe alteration in case table existed previously without extra columns
+            try { stmt.executeUpdate("ALTER TABLE users ADD COLUMN department VARCHAR(100) DEFAULT 'Computer Science & AI'"); } catch (SQLException ignored) {}
+            try { stmt.executeUpdate("ALTER TABLE users ADD COLUMN designation VARCHAR(100) DEFAULT 'Assistant Professor'"); } catch (SQLException ignored) {}
+            try { stmt.executeUpdate("ALTER TABLE users ADD COLUMN role VARCHAR(30) DEFAULT 'FACULTY'"); } catch (SQLException ignored) {}
+
+            // 3. Pre-seed default faculty & staff accounts (password: admin123)
+            String defaultPassHash = hashPassword("admin123");
+            String seedUsersSql = 
+                "INSERT IGNORE INTO users (username, password_hash, department, designation, role) VALUES " +
+                "('mona.nagar', '" + defaultPassHash + "', 'Computer Science & AI', 'Assistant Professor & Guide', 'HOD')," +
+                "('abhinav.batra', '" + defaultPassHash + "', 'Computer Science & AI', 'Assistant Professor & Exam Cell', 'FACULTY')," +
+                "('anand.gaur', '" + defaultPassHash + "', 'AI & Data Science', 'Head of Department (HOD)', 'HOD')," +
+                "('amit.kumar', '" + defaultPassHash + "', 'AI & Computing Labs', 'Senior Lab Incharge', 'STAFF')," +
+                "('abhishek.sihag', '" + defaultPassHash + "', 'Examination Cell', 'Academic Controller', 'ADMIN')," +
+                "('principal.office', '" + defaultPassHash + "', 'Principal Secretariat', 'Executive Administrator', 'ADMIN')";
+            try {
+                stmt.executeUpdate(seedUsersSql);
+            } catch (SQLException ignored) {}
+
+            // 4. Seed initial official circulars if messages table is empty
+            try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM messages")) {
+                if (rs.next() && rs.getInt(1) == 0) {
+                    stmt.executeUpdate(
+                        "INSERT INTO messages (sender, receiver, message) VALUES " +
+                        "('principal.office', 'ALL', '[CIRCULAR] Welcome to JECRC StaffNet: Official College Staff Information, Notice & Circular Distribution System (Academic Year 2026-27).')," +
+                        "('mona.nagar', 'ALL', '[MEETING] Academic Review & Project Progress meeting for 3rd Year CSE (AI) scheduled for Friday at 2:30 PM in Lab 3.')," +
+                        "('abhishek.sihag', 'ALL', '[EXAM] Faculty invigilation duty rosters for upcoming Mid-Term examinations are now published. Please verify your slots.')," +
+                        "('anand.gaur', 'ALL', '[URGENT] NAAC Accreditation criterion documentation verification tomorrow morning at 10:00 AM. All department files must be updated.')"
+                    );
+                }
+            } catch (SQLException ignored) {}
+
+            System.out.println("[DBHandler] StaffNet schema initialized and staff directory verified.");
+        } catch (SQLException e) {
+            System.err.println("[DBHandler] Schema initialization notice: " + e.getMessage());
+        }
+    }
+
+    /**
      * Hashes a plain-text password using the SHA-256 algorithm.
      */
     public static String hashPassword(String password) {
@@ -103,39 +174,92 @@ public class DBHandler {
     }
 
     /**
-     * Registers a new user into the 'users' table.
-     * @return true if registration succeeded; false if username already taken or DB error.
+     * Staff profile representation with institutional department, designation, and role.
      */
-    public static boolean registerUser(String username, String password) {
+    public static class StaffProfile {
+        public final String username;
+        public final String department;
+        public final String designation;
+        public final String role;
+
+        public StaffProfile(String username, String department, String designation, String role) {
+            this.username = username;
+            this.department = (department != null && !department.trim().isEmpty()) ? department.trim() : "Computer Science & Engineering";
+            this.designation = (designation != null && !designation.trim().isEmpty()) ? designation.trim() : "Assistant Professor";
+            this.role = (role != null && !role.trim().isEmpty()) ? role.trim() : "FACULTY";
+        }
+    }
+
+    /**
+     * Retrieves the staff profile including department and designation.
+     */
+    public static StaffProfile getStaffProfile(String username) {
+        if (username == null) {
+            return new StaffProfile("Unknown", "Computer Science & AI", "Faculty", "FACULTY");
+        }
+        String sql = "SELECT username, department, designation, role FROM users WHERE LOWER(username) = LOWER(?)";
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setString(1, username.trim());
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return new StaffProfile(
+                        rs.getString("username"),
+                        rs.getString("department"),
+                        rs.getString("designation"),
+                        rs.getString("role")
+                    );
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[DBHandler] Profile lookup notice: " + e.getMessage());
+        }
+        return new StaffProfile(username, "Computer Science & AI", "Faculty", "FACULTY");
+    }
+
+    /**
+     * Registers a new staff member into the 'users' table with department and designation.
+     */
+    public static boolean registerUser(String username, String password, String department, String designation, String role) {
         if (username == null || username.trim().isEmpty() || password == null || password.trim().isEmpty()) {
             return false;
         }
 
-        String sql = "INSERT INTO users (username, password_hash) VALUES (?, ?)";
+        String dept = (department != null && !department.trim().isEmpty()) ? department.trim() : "Computer Science & AI";
+        String desig = (designation != null && !designation.trim().isEmpty()) ? designation.trim() : "Assistant Professor";
+        String r = (role != null && !role.trim().isEmpty()) ? role.trim() : "FACULTY";
+
+        String sql = "INSERT INTO users (username, password_hash, department, designation, role) VALUES (?, ?, ?, ?, ?)";
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setString(1, username.trim());
             pstmt.setString(2, hashPassword(password));
+            pstmt.setString(3, dept);
+            pstmt.setString(4, desig);
+            pstmt.setString(5, r);
 
-            int rows = pstmt.executeUpdate();
-            return rows > 0;
+            return pstmt.executeUpdate() > 0;
         } catch (SQLException e) {
             System.err.println("[DBHandler] Registration error: " + e.getMessage());
             return false;
         }
     }
 
+    public static boolean registerUser(String username, String password) {
+        return registerUser(username, password, "Computer Science & AI", "Assistant Professor", "FACULTY");
+    }
+
     /**
      * Authenticates a user against the 'users' table.
-     * @return true if credentials are valid, false otherwise.
      */
     public static boolean authenticateUser(String username, String password) {
         if (username == null || password == null) {
             return false;
         }
 
-        String sql = "SELECT password_hash FROM users WHERE username = ?";
+        String sql = "SELECT password_hash FROM users WHERE LOWER(username) = LOWER(?)";
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
@@ -154,10 +278,7 @@ public class DBHandler {
     }
 
     /**
-     * Persists a chat message into the 'messages' table.
-     * @param sender sender username
-     * @param receiver 'ALL' for broadcast or username for 1-to-1 private chat
-     * @param message text content
+     * Persists a notice or chat message into the 'messages' table.
      */
     public static boolean saveMessage(String sender, String receiver, String message) {
         String sql = "INSERT INTO messages (sender, receiver, message, timestamp) VALUES (?, ?, ?, NOW())";
@@ -194,8 +315,8 @@ public class DBHandler {
 
     /**
      * Retrieves historical messages relevant to the given user:
-     * - All broadcast messages (receiver = 'ALL')
-     * - All private messages where the user was either sender or receiver
+     * - All broadcast circulars (receiver = 'ALL')
+     * - All confidential staff memos where the user was either sender or receiver
      * Ordered chronologically.
      */
     public static List<HistoryRecord> getChatHistory(String username) {
@@ -203,7 +324,7 @@ public class DBHandler {
         String sql = "SELECT sender, receiver, message, " +
                      "DATE_FORMAT(timestamp, '%Y-%m-%d %H:%i:%s') AS formatted_time " +
                      "FROM messages " +
-                     "WHERE receiver = 'ALL' OR sender = ? OR receiver = ? " +
+                     "WHERE receiver = 'ALL' OR LOWER(sender) = LOWER(?) OR LOWER(receiver) = LOWER(?) " +
                      "ORDER BY timestamp ASC LIMIT 100";
 
         try (Connection conn = getConnection();
