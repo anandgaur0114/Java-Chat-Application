@@ -57,6 +57,7 @@ import javax.swing.border.EmptyBorder;
  *  - Confidential Faculty Memos (1-to-1) with Pop-Out separate window support.
  *  - Categorized notices (Urgent, Meeting/MoM, Exam Cell, Lab, General Circular).
  *  - Zero-cloud academic document sharing (PDF orders, PPT lecture slides, DOCX duty rosters).
+ *  - Rich CSS & HTML card rendering for presentation-grade visual clarity.
  */
 public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
@@ -114,10 +115,10 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     // Staff directory cache: <username_lower, DirectoryEntry>
     private final Map<String, DirectoryEntry> staffDirectory = new LinkedHashMap<>();
 
-    // HTML Base Template for Notice Cards & Chat Bubbles
+    // HTML/CSS Base Template for Notice Cards & Chat Bubbles
     private static final String HTML_HEADER = 
         "<html><head><style>" +
-        "body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; margin: 8px 12px; background-color: #F8FAFC; }" +
+        "body { font-family: 'Segoe UI', -apple-system, Tahoma, Geneva, Verdana, sans-serif; margin: 10px 14px; background-color: #F8FAFC; color: #1E293B; }" +
         "</style></head><body>";
     private static final String HTML_FOOTER = "</body></html>";
 
@@ -162,8 +163,8 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             }
         });
 
-        setSize(1120, 780);
-        setMinimumSize(new Dimension(960, 640));
+        setSize(1140, 790);
+        setMinimumSize(new Dimension(980, 660));
         setLocationRelativeTo(null);
     }
 
@@ -200,34 +201,40 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                 super.paintComponent(g);
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(new Color(255, 255, 255));
-                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 16, 16);
+                g2.setColor(Color.WHITE);
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 18, 18);
                 g2.setColor(new Color(203, 213, 225));
-                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 16, 16);
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 18, 18);
                 g2.dispose();
             }
         };
         card.setOpaque(false);
-        card.setBorder(new EmptyBorder(26, 36, 26, 36));
+        card.setBorder(new EmptyBorder(32, 44, 32, 44));
 
         GridBagConstraints c = new GridBagConstraints();
-        c.insets = new Insets(5, 8, 5, 8);
+        c.insets = new Insets(6, 10, 6, 10);
         c.fill = GridBagConstraints.HORIZONTAL;
 
-        // Title Header
-        JLabel headerIcon = new JLabel("🏛️ JECRC CAMPUS STAFFNET", SwingConstants.CENTER);
-        headerIcon.setFont(new Font("Segoe UI", Font.BOLD, 22));
-        headerIcon.setForeground(COLOR_PRIMARY);
+        // Institutional Crest Header
+        JLabel instName = new JLabel("JAIPUR ENGINEERING COLLEGE & RESEARCH CENTRE", SwingConstants.CENTER);
+        instName.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        instName.setForeground(new Color(100, 116, 139));
         c.gridx = 0; c.gridy = 0; c.gridwidth = 2;
-        card.add(headerIcon, c);
+        card.add(instName, c);
 
-        JLabel subHeader = new JLabel("College Staff Information & Circular Distribution Portal", SwingConstants.CENTER);
-        subHeader.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        subHeader.setForeground(new Color(100, 116, 139));
+        JLabel headerTitle = new JLabel("🏛️ JECRC CAMPUS STAFFNET", SwingConstants.CENTER);
+        headerTitle.setFont(new Font("Segoe UI", Font.BOLD, 23));
+        headerTitle.setForeground(COLOR_PRIMARY);
         c.gridy = 1;
+        card.add(headerTitle, c);
+
+        JLabel subHeader = new JLabel("Faculty Information & Official Circular Distribution System", SwingConstants.CENTER);
+        subHeader.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        subHeader.setForeground(new Color(71, 85, 105));
+        c.gridy = 2;
         card.add(subHeader, c);
 
-        // Host & Port
+        // Server Host & Port Row
         JPanel serverRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
         serverRow.setOpaque(false);
         serverRow.add(new JLabel("Host:"));
@@ -240,28 +247,31 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         styleInputField(portField);
         serverRow.add(portField);
 
-        c.gridy = 2;
+        c.gridy = 3;
+        c.insets = new Insets(10, 10, 12, 10);
         card.add(serverRow, c);
+
+        c.insets = new Insets(5, 10, 5, 10);
 
         // Staff Username
         c.gridwidth = 1;
-        c.gridy = 3; c.gridx = 0;
-        card.add(createFieldLabel("Staff Username:"), c);
+        c.gridy = 4; c.gridx = 0;
+        card.add(createFieldLabel("👤 Staff Username:"), c);
         usernameField = createStyledTextField("");
         c.gridx = 1;
         card.add(usernameField, c);
 
         // Password
-        c.gridy = 4; c.gridx = 0;
-        card.add(createFieldLabel("Password:"), c);
+        c.gridy = 5; c.gridx = 0;
+        card.add(createFieldLabel("🔑 Password:"), c);
         passwordField = new JPasswordField();
         styleInputField(passwordField);
         c.gridx = 1;
         card.add(passwordField, c);
 
-        // Department Selector (Filtered per requirements: no principal secretary, no AI & computing lab)
-        c.gridy = 5; c.gridx = 0;
-        card.add(createFieldLabel("Department:"), c);
+        // Department Selector (Filtered: no principal secretary, no AI & computing lab)
+        c.gridy = 6; c.gridx = 0;
+        card.add(createFieldLabel("🏢 Department:"), c);
         departmentCombo = new JComboBox<>(new String[]{
             "Computer Science & AI",
             "Information Technology",
@@ -270,12 +280,13 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             "Administration"
         });
         departmentCombo.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        departmentCombo.setPreferredSize(new Dimension(210, 36));
         c.gridx = 1;
         card.add(departmentCombo, c);
 
         // Designation Selector (Includes Principal, removes assistant professor and guide)
-        c.gridy = 6; c.gridx = 0;
-        card.add(createFieldLabel("Designation:"), c);
+        c.gridy = 7; c.gridx = 0;
+        card.add(createFieldLabel("🎖️ Designation:"), c);
         designationCombo = new JComboBox<>(new String[]{
             "Principal",
             "Head of Department (HOD)",
@@ -287,44 +298,32 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             "Administrative Officer"
         });
         designationCombo.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        designationCombo.setPreferredSize(new Dimension(210, 36));
         c.gridx = 1;
         card.add(designationCombo, c);
 
-        // Status Label
+        // Status Feedback Label
         authStatusLabel = new JLabel(" ", SwingConstants.CENTER);
         authStatusLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
         authStatusLabel.setForeground(COLOR_LOGOUT_RED);
-        c.gridy = 7; c.gridx = 0; c.gridwidth = 2;
+        c.gridy = 8; c.gridx = 0; c.gridwidth = 2;
         card.add(authStatusLabel, c);
 
-        // Buttons
-        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 4));
+        // Buttons Row
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 6));
         btnPanel.setOpaque(false);
 
-        loginBtn = createModernButton("Log In", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 130, 40);
+        loginBtn = createModernButton("Log In", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 135, 42);
         loginBtn.addActionListener(e -> attemptAuth(true));
 
-        registerBtn = createModernButton("Register New Staff", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 180, 40);
+        registerBtn = createModernButton("Register New Staff", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 185, 42);
         registerBtn.addActionListener(e -> attemptAuth(false));
 
         btnPanel.add(loginBtn);
         btnPanel.add(registerBtn);
 
-        c.gridy = 8;
-        card.add(btnPanel, c);
-
-        // Demo Tips Banner
-        JLabel tipLabel = new JLabel(
-            "<html><center><font face='Segoe UI' size='2' color='#64748B'>" +
-            "💡 <b>Default Accounts</b> (Password: <b>admin123</b>):<br/>" +
-            "• <b>principal</b> (Principal • Main Notice Board)<br/>" +
-            "• <b>mona.nagar</b> (HOD • Computer Science & AI)<br/>" +
-            "• <b>amit.kumar</b> (Faculty • Information Technology)<br/>" +
-            "• <b>abhinav.batra</b> (Faculty • Computer Science & AI) • <b>anand.gaur</b> (HOD • AI & DS)" +
-            "</font></center></html>", SwingConstants.CENTER
-        );
         c.gridy = 9;
-        card.add(tipLabel, c);
+        card.add(btnPanel, c);
 
         passwordField.addActionListener(e -> attemptAuth(true));
         usernameField.addActionListener(e -> passwordField.requestFocusInWindow());
@@ -348,7 +347,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
     private void styleInputField(JTextField tf) {
         tf.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        tf.setPreferredSize(new Dimension(210, 34));
+        tf.setPreferredSize(new Dimension(210, 36));
         tf.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(COLOR_BORDER, 1, true),
             BorderFactory.createEmptyBorder(4, 10, 4, 10)
@@ -527,12 +526,12 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         });
 
         JScrollPane userScroll = new JScrollPane(userJList);
-        userScroll.setPreferredSize(new Dimension(290, 300));
+        userScroll.setPreferredSize(new Dimension(300, 300));
         userScroll.setBorder(BorderFactory.createLineBorder(COLOR_BORDER, 1, true));
         userListContainer.add(userScroll, BorderLayout.CENTER);
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, tabbedPane, userListContainer);
-        splitPane.setResizeWeight(0.73);
+        splitPane.setResizeWeight(0.72);
         splitPane.setBorder(null);
         splitPane.setDividerSize(8);
         centerContainer.add(splitPane, BorderLayout.CENTER);
@@ -600,7 +599,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         inputRow.add(rightButtons, BorderLayout.EAST);
         bottomContainer.add(inputRow, BorderLayout.CENTER);
 
-        // Telemetry Bar
+        // Live Technical Telemetry Bar
         JPanel telemetryBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 2));
         telemetryBar.setOpaque(false);
         JLabel telemetryLabel = new JLabel(
@@ -693,10 +692,9 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             containerPanel = new JPanel(new BorderLayout(0, 0));
             containerPanel.setBackground(Color.WHITE);
 
-            // Sub-header with Channel info and Pop Out button
             JPanel subHeader = new JPanel(new BorderLayout());
             subHeader.setBackground(new Color(248, 250, 252));
-            subHeader.setBorder(new EmptyBorder(6, 12, 6, 12));
+            subHeader.setBorder(new EmptyBorder(8, 14, 8, 14));
 
             JLabel channelLabel = new JLabel(headerText);
             channelLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
@@ -935,7 +933,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
     private String getDocumentTypeBadge(String fileName) {
         String lower = fileName.toLowerCase();
-        if (lower.endsWith(".pdf")) return "📕 Official Order / Circular (PDF)";
+        if (lower.endsWith(".pdf")) return "📕 Official Circular / Order (PDF)";
         if (lower.endsWith(".ppt") || lower.endsWith(".pptx")) return "📊 Faculty Lecture / Presentation (PPT)";
         if (lower.endsWith(".doc") || lower.endsWith(".docx")) return "📘 Notice / Duty Roster / Minutes (DOCX)";
         if (lower.endsWith(".xls") || lower.endsWith(".xlsx")) return "📗 Grade Sheet / Attendance Register (XLSX)";
@@ -951,7 +949,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 5. HTML NOTICE CARD & CHAT BUBBLE RENDERING
+    // 5. CSS & HTML NOTICE CARD RENDERING
     // =========================================================================
     private String escapeHtml(String text) {
         if (text == null) return "";
@@ -962,80 +960,95 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                    .replace("\n", "<br>");
     }
 
+    /**
+     * Builds modern, CSS-styled institutional notice cards with color-coded accent bars.
+     */
     private String buildNoticeBubble(String timestamp, String sender, String rawMessage, boolean isOutgoing, String boardName) {
         String badge = "";
-        String cardBg = isOutgoing ? "#EFF6FF" : "#FFFFFF";
-        String border = isOutgoing ? "#BFDBFE" : "#E2E8F0";
+        String cardBg = isOutgoing ? "#F8FAFC" : "#FFFFFF";
+        String border = "#E2E8F0";
+        String accentColor = "#4F46E5"; // Default Indigo
         String content = rawMessage;
 
         if (rawMessage.startsWith("[URGENT]")) {
-            badge = "<span style='background-color:#DC2626; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>🚨 URGENT DIRECTIVE</span>";
-            cardBg = "#FEF2F2";
-            border = "#EF4444";
+            accentColor = "#DC2626"; // Crimson
+            badge = "<span style='background-color:#DC2626; color:#ffffff; font-family:Segoe UI; font-size:10px; font-weight:bold; padding:3px 9px;'>🚨 URGENT DIRECTIVE</span>";
+            cardBg = "#FFF5F5";
+            border = "#FECACA";
             content = rawMessage.substring(8).trim();
         } else if (rawMessage.startsWith("[MEETING]")) {
-            badge = "<span style='background-color:#D97706; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>📋 MEETING NOTICE / MoM</span>";
+            accentColor = "#D97706"; // Amber
+            badge = "<span style='background-color:#D97706; color:#ffffff; font-family:Segoe UI; font-size:10px; font-weight:bold; padding:3px 9px;'>📋 MEETING NOTICE / MoM</span>";
             cardBg = "#FFFBEB";
-            border = "#F59E0B";
+            border = "#FDE68A";
             content = rawMessage.substring(9).trim();
         } else if (rawMessage.startsWith("[EXAM]")) {
-            badge = "<span style='background-color:#2563EB; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>📝 EXAM CELL & ACADEMIC</span>";
-            cardBg = "#EFF6FF";
-            border = "#3B82F6";
+            accentColor = "#2563EB"; // Royal Blue
+            badge = "<span style='background-color:#2563EB; color:#ffffff; font-family:Segoe UI; font-size:10px; font-weight:bold; padding:3px 9px;'>📝 EXAM CELL & ACADEMIC</span>";
+            cardBg = "#F0F9FF";
+            border = "#BAE6FD";
             content = rawMessage.substring(6).trim();
         } else if (rawMessage.startsWith("[LAB]")) {
-            badge = "<span style='background-color:#059669; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>🔬 LAB & INFRASTRUCTURE</span>";
-            cardBg = "#ECFDF5";
-            border = "#10B981";
+            accentColor = "#059669"; // Emerald
+            badge = "<span style='background-color:#059669; color:#ffffff; font-family:Segoe UI; font-size:10px; font-weight:bold; padding:3px 9px;'>🔬 LAB & INFRASTRUCTURE</span>";
+            cardBg = "#F0FDF4";
+            border = "#BBF7D0";
             content = rawMessage.substring(5).trim();
         } else if (rawMessage.startsWith("[CIRCULAR]")) {
-            badge = "<span style='background-color:#4F46E5; color:white; font-size:10px; font-weight:bold; padding:2px 8px; border-radius:4px;'>📢 OFFICIAL CIRCULAR</span>";
-            cardBg = "#EEF2FF";
-            border = "#6366F1";
+            accentColor = "#4F46E5"; // Indigo
+            badge = "<span style='background-color:#4F46E5; color:#ffffff; font-family:Segoe UI; font-size:10px; font-weight:bold; padding:3px 9px;'>📢 OFFICIAL CIRCULAR</span>";
+            cardBg = "#F5F3FF";
+            border = "#DDD6FE";
             content = rawMessage.substring(10).trim();
         }
 
         String senderLabel = isOutgoing ? "You (" + client.getCurrentDesignation() + ")" : sender;
         DirectoryEntry staff = staffDirectory.get(sender.toLowerCase());
         if (staff != null && !isOutgoing) {
-            senderLabel = staff.key + " [" + staff.designation + " - " + staff.department + "]";
+            senderLabel = staff.key + " [" + staff.designation + " • " + staff.department + "]";
         }
 
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:10px;'>" +
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:12px;'>" +
                "<tr><td>" +
-               "<table width='100%' cellpadding='10' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + "; border-left:5px solid " + border + ";'>" +
+               "<table width='100%' cellpadding='12' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + "; border-left:6px solid " + accentColor + ";'>" +
                "<tr><td>" +
                (badge.isEmpty() ? "" : badge + "&nbsp;&nbsp;") +
-               "<font face='Segoe UI' size='3' color='#1E293B'><b>" + escapeHtml(senderLabel) + "</b></font>" +
-               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;•&nbsp;&nbsp;" + escapeHtml(timestamp) + " (" + escapeHtml(boardName) + ")</font><br>" +
-               "<div style='margin-top:6px;'><font face='Segoe UI' size='4' color='#0F172A'>" + escapeHtml(content) + "</font></div>" +
+               "<span style='color:#64748B; font-size:11px; font-weight:600;'>🏛️ " + escapeHtml(boardName) + "</span><br/>" +
+               "<div style='margin-top:6px;'>" +
+               "<font face='Segoe UI' size='3' color='#0F172A'><b>" + escapeHtml(senderLabel) + "</b></font>" +
+               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;•&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font>" +
+               "</div>" +
+               "<div style='margin-top:8px; padding-top:6px; border-top:1px solid " + border + ";'>" +
+               "<font face='Segoe UI' size='4' color='#1E293B'>" + escapeHtml(content) + "</font>" +
+               "</div>" +
                "</td></tr></table></td></tr></table>";
     }
 
     private String buildIncomingPrivateBubble(String timestamp, String sender, String message) {
         DirectoryEntry staff = staffDirectory.get(sender.toLowerCase());
         String senderLabel = (staff != null) 
-            ? staff.key + " (" + staff.designation + ")" 
+            ? staff.key + " (" + staff.designation + " • " + staff.department + ")" 
             : sender;
 
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:10px;'>" +
                "<tr><td align='left'>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#FAF5FF; border:1px solid #E9D5FF; border-left:4px solid #7C3AED;'>" +
+               "<table cellpadding='10' cellspacing='0' border='0' style='background-color:#FAF5FF; border:1px solid #E9D5FF; border-left:6px solid #9333EA; min-width:320px;'>" +
                "<tr><td>" +
-               "<font face='Segoe UI' size='3' color='#7C3AED'><b>🔒 Confidential Memo: " + escapeHtml(senderLabel) + "</b></font>" +
-               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<div style='margin-top:4px;'><font face='Segoe UI' size='4' color='#1E293B'>" + escapeHtml(message) + "</font></div>" +
+               "<span style='background-color:#9333EA; color:#ffffff; font-family:Segoe UI; font-size:10px; font-weight:bold; padding:2px 8px;'>🔒 CONFIDENTIAL MEMO</span>" +
+               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;•&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br/>" +
+               "<div style='margin-top:4px;'><font face='Segoe UI' size='3' color='#6B21A8'><b>" + escapeHtml(senderLabel) + "</b></font></div>" +
+               "<div style='margin-top:6px; padding-top:6px; border-top:1px solid #E9D5FF;'><font face='Segoe UI' size='4' color='#1E293B'>" + escapeHtml(message) + "</font></div>" +
                "</td></tr></table></td></tr></table>";
     }
 
     private String buildOutgoingPrivateBubble(String timestamp, String message) {
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:10px;'>" +
                "<tr><td align='right'>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#F0FDF4; border:1px solid #BBF7D0; border-right:4px solid #059669;'>" +
+               "<table cellpadding='10' cellspacing='0' border='0' style='background-color:#F0FDF4; border:1px solid #BBF7D0; border-right:6px solid #059669; min-width:320px;'>" +
                "<tr><td align='right'>" +
-               "<font face='Segoe UI' size='2' color='#0D9488'><b>🔒 Confidential Memo Sent</b></font>" +
-               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<div style='margin-top:4px;' align='left'><font face='Segoe UI' size='4' color='#064E3B'>" + escapeHtml(message) + "</font></div>" +
+               "<span style='background-color:#059669; color:#ffffff; font-family:Segoe UI; font-size:10px; font-weight:bold; padding:2px 8px;'>🔒 CONFIDENTIAL MEMO SENT</span>" +
+               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;•&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br/>" +
+               "<div style='margin-top:6px;' align='left'><font face='Segoe UI' size='4' color='#064E3B'>" + escapeHtml(message) + "</font></div>" +
                "</td></tr></table></td></tr></table>";
     }
 
@@ -1045,25 +1058,26 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         String cardBg = isOutgoing ? "#EFF6FF" : "#FFFFFF";
         String border = isOutgoing ? "#93C5FD" : "#CBD5E1";
 
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:10px;'>" +
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:12px;'>" +
                "<tr><td align='" + (isOutgoing ? "right" : "left") + "'>" +
-               "<table cellpadding='10' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + "; min-width:320px;'>" +
+               "<table cellpadding='12' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + "; border-left:6px solid #2563EB; min-width:340px;'>" +
                "<tr><td>" +
-               "<font face='Segoe UI' size='2' color='#2563EB'><b>" + escapeHtml(channelTag) + "</b></font>" +
-               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
-               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#F8FAFC; border:1px solid #E2E8F0; margin-top:6px; width:100%;'>" +
+               "<span style='background-color:#2563EB; color:#ffffff; font-family:Segoe UI; font-size:10px; font-weight:bold; padding:3px 9px;'>📁 DOCUMENT DISPATCH</span>" +
+               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;•&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br/>" +
+               "<div style='margin-top:6px;'><font face='Segoe UI' size='2' color='#475569'><b>" + escapeHtml(channelTag) + "</b></font></div>" +
+               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:#F8FAFC; border:1px solid #E2E8F0; margin-top:8px; width:100%;'>" +
                "<tr><td>" +
-               "<font face='Segoe UI' size='2' color='#475569'><b>" + escapeHtml(docType) + "</b></font><br>" +
-               "<font face='Segoe UI' size='3' color='#0F172A'><b>" + escapeHtml(fileName) + "</b></font><br>" +
-               "<font face='Segoe UI' size='2' color='#059669'><b>" + sizeStr + "</b> • Saved to downloads/ (Staff Archive)</font>" +
+               "<font face='Segoe UI' size='2' color='#64748B'><b>" + escapeHtml(docType) + "</b></font><br/>" +
+               "<font face='Segoe UI' size='3' color='#0F172A'><b>" + escapeHtml(fileName) + "</b></font><br/>" +
+               "<div style='margin-top:4px;'><span style='background-color:#DCFCE7; color:#15803D; font-family:Segoe UI; font-size:11px; font-weight:bold; padding:2px 8px;'>✓ Saved to downloads/</span> <font face='Segoe UI' size='2' color='#64748B'>(" + sizeStr + ")</font></div>" +
                "</td></tr></table>" +
                "</td></tr></table></td></tr></table>";
     }
 
     private String buildSystemNotice(String text) {
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:6px 0;'>" +
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:10px 0;'>" +
                "<tr><td align='center'>" +
-               "<font face='Segoe UI' size='2' color='#64748B'><i>— " + escapeHtml(text) + " —</i></font>" +
+               "<span style='background-color:#F1F5F9; border:1px solid #CBD5E1; color:#475569; font-family:Segoe UI; font-size:11px; font-weight:600; padding:4px 14px;'>— " + escapeHtml(text) + " —</span>" +
                "</td></tr></table>";
     }
 
@@ -1111,7 +1125,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             loginBtn.setEnabled(true);
             registerBtn.setEnabled(true);
 
-            // Clear and initialize standard notice boards
             tabbedPane.removeAll();
             conversations.clear();
 
@@ -1160,7 +1173,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         SwingUtilities.invokeLater(() -> {
             ConversationWindow win = getOrCreateConversation(KEY_MAIN_BOARD, "Main Campus Notice Board", false);
             boolean isMe = sender.equalsIgnoreCase(client.getCurrentUsername());
-            win.appendHtmlRow(buildNoticeBubble(timestamp, sender, message, isMe, "Main Board"));
+            win.appendHtmlRow(buildNoticeBubble(timestamp, sender, message, isMe, "Main Campus Board"));
         });
     }
 
@@ -1203,7 +1216,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             userListModel.clear();
             staffDirectory.clear();
 
-            // 1. Main Notice Board at top
+            // 1. Main Notice Board
             userListModel.addElement(new DirectoryEntry(KEY_MAIN_BOARD, "🏛️ Main Campus Notice Board", "All Departments", "Principal & HOD Directives", 0));
 
             // 2. Department Notice Board
@@ -1232,7 +1245,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         SwingUtilities.invokeLater(() -> {
             ConversationWindow win = getOrCreateConversation(KEY_MAIN_BOARD, "Main Campus Notice Board", false);
             boolean isMe = sender.equalsIgnoreCase(client.getCurrentUsername());
-            win.appendHtmlRow(buildNoticeBubble(timestamp, sender, message, isMe, "Main Board"));
+            win.appendHtmlRow(buildNoticeBubble(timestamp, sender, message, isMe, "Main Campus Board"));
         });
     }
 
@@ -1352,8 +1365,8 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     private class DirectoryCellRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
-            JPanel p = new JPanel(new BorderLayout(6, 2));
-            p.setBorder(new EmptyBorder(6, 10, 6, 10));
+            JPanel p = new JPanel(new BorderLayout(8, 2));
+            p.setBorder(new EmptyBorder(8, 12, 8, 12));
 
             if (isSelected) {
                 p.setBackground(new Color(238, 242, 255));
