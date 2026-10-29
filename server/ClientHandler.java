@@ -142,6 +142,25 @@ public class ClientHandler implements Runnable {
      * Processes messages and chat commands for an authenticated user.
      */
     private void handleChatProtocol(String commandLine) {
+        if (commandLine.startsWith("FILE_BROADCAST|")) {
+            String[] fParts = commandLine.split("\\|", 3);
+            if (fParts.length >= 3) {
+                String fileName = fParts[1];
+                String base64 = fParts[2];
+                ChatServer.broadcastFile(username, fileName, base64);
+            }
+            return;
+        } else if (commandLine.startsWith("FILE_PRIVATE|")) {
+            String[] fParts = commandLine.split("\\|", 4);
+            if (fParts.length >= 4) {
+                String recipient = fParts[1].trim();
+                String fileName = fParts[2];
+                String base64 = fParts[3];
+                ChatServer.sendPrivateFile(username, recipient, fileName, base64);
+            }
+            return;
+        }
+
         String[] parts = commandLine.split("\\|", 3);
         String action = parts[0];
 

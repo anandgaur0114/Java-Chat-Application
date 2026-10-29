@@ -9,6 +9,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 
 /**
@@ -33,6 +34,9 @@ public class ChatClient {
         void onUserListUpdated(List<String> users);
         void onHistoryMessage(String timestamp, String sender, String receiver, String message);
         void onHistoryDone();
+        void onFileBroadcastReceived(String timestamp, String sender, String fileName, byte[] fileData);
+        void onFilePrivateReceived(String timestamp, String sender, String fileName, byte[] fileData);
+        void onFilePrivateSent(String timestamp, String recipient, String fileName, byte[] fileData);
         void onDisconnected(String reason);
     }
 
@@ -182,6 +186,48 @@ public class ChatClient {
                 }
                 break;
 
+            case "FILE_MSG": {
+                // Format: FILE_MSG|timestamp|sender|fileName|base64
+                String[] fParts = line.split("\\|", 5);
+                if (fParts.length >= 5 && listener != null) {
+                    try {
+                        byte[] data = Base64.getDecoder().decode(fParts[4]);
+                        listener.onFileBroadcastReceived(fParts[1], fParts[2], fParts[3], data);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+                break;
+            }
+
+            case "FILE_PRIV_MSG": {
+                // Format: FILE_PRIV_MSG|timestamp|sender|fileName|base64
+                String[] fParts = line.split("\\|", 5);
+                if (fParts.length >= 5 && listener != null) {
+                    try {
+                        byte[] data = Base64.getDecoder().decode(fParts[4]);
+                        listener.onFilePrivateReceived(fParts[1], fParts[2], fParts[3], data);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+                break;
+            }
+
+            case "FILE_PRIV_SENT": {
+                // Format: FILE_PRIV_SENT|timestamp|recipient|fileName|base64
+                String[] fParts = line.split("\\|", 5);
+                if (fParts.length >= 5 && listener != null) {
+                    try {
+                        byte[] data = Base64.getDecoder().decode(fParts[4]);
+                        listener.onFilePrivateSent(fParts[1], fParts[2], fParts[3], data);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+                break;
+            }
+
             default:
                 System.out.println("[Client] Unhandled server command: " + line);
                 break;
@@ -209,6 +255,20 @@ public class ChatClient {
     public synchronized void sendPrivate(String recipient, String message) {
         if (out != null) {
             out.println("PRIVATE|" + recipient + "|" + message);
+        }
+    }
+
+    public synchronized void sendFileBroadcast(String fileName, byte[] data) {
+        if (out != null) {
+            String b64 = Base64.getEncoder().encodeToString(data);
+            out.println("FILE_BROADCAST|" + fileName + "|" + b64);
+        }
+    }
+
+    public synchronized void sendFilePrivate(String recipient, String fileName, byte[] data) {
+        if (out != null) {
+            String b64 = Base64.getEncoder().encodeToString(data);
+            out.println("FILE_PRIVATE|" + recipient + "|" + fileName + "|" + b64);
         }
     }
 

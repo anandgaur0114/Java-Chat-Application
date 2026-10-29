@@ -150,6 +150,44 @@ public class ChatServer {
     }
 
     /**
+     * Broadcasts a file attachment to all connected clients and logs it in MySQL.
+     */
+    public static void broadcastFile(String sender, String fileName, String base64Data) {
+        String timestamp = LocalTime.now().format(TIME_FORMATTER);
+        DBHandler.saveMessage(sender, "ALL", "[FILE_ATTACHMENT: " + fileName + "]");
+
+        String protocolMsg = "FILE_MSG|" + timestamp + "|" + sender + "|" + fileName + "|" + base64Data;
+        for (ClientHandler client : onlineClients.values()) {
+            client.sendMessage(protocolMsg);
+        }
+    }
+
+    /**
+     * Sends a private file attachment to a specific recipient.
+     */
+    public static boolean sendPrivateFile(String sender, String receiver, String fileName, String base64Data) {
+        String timestamp = LocalTime.now().format(TIME_FORMATTER);
+        DBHandler.saveMessage(sender, receiver, "[FILE_ATTACHMENT: " + fileName + "]");
+
+        ClientHandler recipientHandler = onlineClients.get(receiver.toLowerCase());
+        boolean isRecipientOnline = (recipientHandler != null);
+
+        if (isRecipientOnline) {
+            recipientHandler.sendMessage("FILE_PRIV_MSG|" + timestamp + "|" + sender + "|" + fileName + "|" + base64Data);
+        }
+
+        ClientHandler senderHandler = onlineClients.get(sender.toLowerCase());
+        if (senderHandler != null) {
+            senderHandler.sendMessage("FILE_PRIV_SENT|" + timestamp + "|" + receiver + "|" + fileName + "|" + base64Data);
+            if (!isRecipientOnline) {
+                senderHandler.sendMessage("SYS_MSG|" + timestamp + "|[INFO] " + receiver + " is offline, file was logged.");
+            }
+        }
+
+        return isRecipientOnline;
+    }
+
+    /**
      * Broadcasts the current list of online users to all clients.
      */
     public static void broadcastUserList() {

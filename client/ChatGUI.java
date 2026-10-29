@@ -5,6 +5,7 @@ import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
+import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -16,7 +17,9 @@ import java.awt.Insets;
 import java.awt.RenderingHints;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +30,7 @@ import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JEditorPane;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -45,13 +49,14 @@ import javax.swing.border.EmptyBorder;
 
 /**
  * ChatGUI provides a presentation-grade, modern desktop interface rendering 
- * rich HTML/CSS chat bubbles (WhatsApp / Slack / Discord aesthetic) for each conversation.
+ * rich HTML/CSS chat bubbles (WhatsApp / Slack / Discord aesthetic) for each conversation,
+ * with full support for sharing files (PDF, PPT, Word, Images, etc.).
  * Demonstrates:
  *  - HTML/CSS rendering in Java Swing (JEditorPane with speech bubbles)
+ *  - File sharing over TCP Sockets using Base64 encoding
  *  - Per-user conversation decoupling (JTabbedPane & Detachable Pop-Out Windows)
  *  - Event Dispatch Thread (EDT) safety via SwingUtilities.invokeLater
  *  - Live technical telemetry bar (TCP Socket status, MySQL persistence, SHA-256)
- *  - Interactive Presentation & Architecture dialog for lab examiners
  */
 public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
 
@@ -89,6 +94,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     private JList<String> userJList;
     private JLabel targetIndicator;
     private JTextField messageInputField;
+    private JButton attachFileBtn;
     private JButton sendBtn;
     private JButton logoutBtn;
     private JLabel contactsCountLabel;
@@ -107,7 +113,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     private static final String HTML_FOOTER = "</body></html>";
 
     public ChatGUI() {
-        super("Java Sockets Chat Application - Presentation Edition");
+        super("Java Sockets Chat Application");
         client.setListener(this);
 
         initSystemRendering();
@@ -121,8 +127,8 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             }
         });
 
-        setSize(1060, 740);
-        setMinimumSize(new Dimension(840, 600));
+        setSize(1080, 750);
+        setMinimumSize(new Dimension(860, 620));
         setLocationRelativeTo(null);
     }
 
@@ -142,7 +148,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 1. MODERN PRESENTATION LOGIN PANEL
+    // 1. MODERN LOGIN PANEL
     // =========================================================================
     private JPanel createLoginPanel() {
         JPanel background = new JPanel(new GridBagLayout());
@@ -167,12 +173,11 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         c.insets = new Insets(6, 8, 6, 8);
         c.fill = GridBagConstraints.HORIZONTAL;
 
-        // Rich HTML Title Banner
         JLabel title = new JLabel(
             "<html><center>" +
             "<font face='Segoe UI' size='6' color='#1E293B'><b>💬 Java Sockets Chat Room</b></font><br>" +
-            "<font face='Segoe UI' size='3' color='#4F46E5'><b>Advanced Java Lab Presentation</b></font><br>" +
-            "<font face='Segoe UI' size='2' color='#64748B'>JDK 25 • TCP Sockets • MySQL 8.0 • Swing HTML/CSS</font>" +
+            "<font face='Segoe UI' size='3' color='#4F46E5'><b>Messaging & File Sharing Platform</b></font><br>" +
+            "<font face='Segoe UI' size='2' color='#64748B'>JDK 25 • TCP Sockets • MySQL 8.0 • File Transfer (PDF/PPT/Docs)</font>" +
             "</center></html>", SwingConstants.CENTER
         );
         c.gridx = 0; c.gridy = 0; c.gridwidth = 2;
@@ -211,7 +216,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         c.gridy = 5; c.gridx = 0; c.gridwidth = 2;
         card.add(authStatusLabel, c);
 
-        // Buttons Row
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 5));
         btnPanel.setOpaque(false);
 
@@ -227,7 +231,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         c.gridy = 6;
         card.add(btnPanel, c);
 
-        // Demo Tip Label
         JLabel tipLabel = new JLabel(
             "<html><center><font face='Segoe UI' size='2' color='#64748B'>" +
             "💡 <b>Demo Tip:</b> Pre-seeded users: <b>Anand</b> / <b>password123</b> or <b>Sunanda</b> / <b>password123</b>" +
@@ -311,7 +314,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 2. MAIN CHAT PANEL (RICH HTML CHAT BUBBLES + STATUS TELEMETRY)
+    // 2. MAIN CHAT PANEL
     // =========================================================================
     private JPanel createChatPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 0));
@@ -339,14 +342,14 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         userMetaPanel.add(userStatusLabel);
         topBar.add(userMetaPanel, BorderLayout.WEST);
 
-        // Right Action Controls (Architecture Info + Logout)
+        // Right Action Controls: Open Downloads Folder + Logout
         JPanel topActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         topActions.setOpaque(false);
 
-        JButton infoBtn = createModernButton("ℹ Presentation Info", new Color(30, 41, 59), new Color(51, 65, 85), Color.WHITE, 160, 36);
-        infoBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        infoBtn.addActionListener(e -> showPresentationInfoDialog());
-        topActions.add(infoBtn);
+        JButton openDownloadsBtn = createModernButton("📁 Downloads", new Color(30, 41, 59), new Color(51, 65, 85), Color.WHITE, 140, 36);
+        openDownloadsBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        openDownloadsBtn.addActionListener(e -> openDownloadsFolder());
+        topActions.add(openDownloadsBtn);
 
         logoutBtn = createModernButton("Disconnect & Logout", new Color(30, 41, 59), COLOR_LOGOUT_RED, Color.WHITE, 180, 36);
         logoutBtn.addActionListener(e -> {
@@ -439,7 +442,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         centerContainer.add(splitPane, BorderLayout.CENTER);
         panel.add(centerContainer, BorderLayout.CENTER);
 
-        // --- Bottom Area: Target Chip + Message Input + Technical Telemetry ---
+        // --- Bottom Area: Target Chip + Message Input + Attach File + Send ---
         JPanel bottomContainer = new JPanel(new BorderLayout(0, 6));
         bottomContainer.setBorder(new EmptyBorder(4, 14, 10, 14));
         bottomContainer.setOpaque(false);
@@ -452,7 +455,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         targetChipPanel.add(targetIndicator);
         bottomContainer.add(targetChipPanel, BorderLayout.NORTH);
 
-        // Input Row
+        // Input & Attachment Row
         JPanel inputRow = new JPanel(new BorderLayout(10, 0));
         inputRow.setOpaque(false);
 
@@ -465,22 +468,33 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         ));
         messageInputField.addActionListener(e -> sendMessage());
 
-        sendBtn = createModernButton("Send", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 100, 44);
+        JPanel rightButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        rightButtons.setOpaque(false);
+
+        // Attach File Button (PDF, PPT, Word, Images, etc.)
+        attachFileBtn = createModernButton("📎 Attach File", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 135, 44);
+        attachFileBtn.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        attachFileBtn.addActionListener(e -> selectAndSendFile());
+
+        sendBtn = createModernButton("Send", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 90, 44);
         sendBtn.addActionListener(e -> sendMessage());
 
+        rightButtons.add(attachFileBtn);
+        rightButtons.add(sendBtn);
+
         inputRow.add(messageInputField, BorderLayout.CENTER);
-        inputRow.add(sendBtn, BorderLayout.EAST);
+        inputRow.add(rightButtons, BorderLayout.EAST);
         bottomContainer.add(inputRow, BorderLayout.CENTER);
 
-        // Live Technical Telemetry Bar for Lab Presentation
+        // Live Technical Telemetry Bar
         JPanel telemetryBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 2));
         telemetryBar.setOpaque(false);
         JLabel telemetryLabel = new JLabel(
             "<html><font face='Segoe UI' size='2' color='#64748B'>" +
             "🟢 <b>TCP Sockets</b>: Port 12345  •  " +
             "⚡ <b>Concurrency</b>: ExecutorService  •  " +
-            "🗄️ <b>Database</b>: MySQL 8.0 JDBC  •  " +
-            "🔒 <b>Security</b>: SHA-256 Hashing" +
+            "📁 <b>File Transfer</b>: Base64 Binary Stream  •  " +
+            "🗄️ <b>Database</b>: MySQL 8.0 JDBC" +
             "</font></html>"
         );
         telemetryBar.add(telemetryLabel);
@@ -533,11 +547,15 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             channelLabel.setForeground(COLOR_TEXT_MAIN);
             subHeader.add(channelLabel, BorderLayout.WEST);
 
+            JPanel subActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+            subActions.setOpaque(false);
+
             JButton popOutBtn = createModernButton("⧉ Pop Out Window", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 150, 28);
             popOutBtn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
             popOutBtn.addActionListener(e -> togglePopOut(this));
-            subHeader.add(popOutBtn, BorderLayout.EAST);
+            subActions.add(popOutBtn);
 
+            subHeader.add(subActions, BorderLayout.EAST);
             containerPanel.add(subHeader, BorderLayout.NORTH);
 
             // JEditorPane configured for HTML/CSS chat bubble rendering
@@ -605,6 +623,12 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             popInput.setFont(new Font("Segoe UI", Font.PLAIN, 15));
             popInput.setPreferredSize(new Dimension(200, 38));
 
+            JPanel popRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+            popRight.setOpaque(false);
+
+            JButton popAttach = createModernButton("📎", new Color(241, 245, 249), new Color(226, 232, 240), COLOR_TEXT_MAIN, 50, 38);
+            popAttach.addActionListener(e -> selectAndSendFile());
+
             JButton popSend = createModernButton("Send", COLOR_PRIMARY, COLOR_PRIMARY_HOVER, Color.WHITE, 80, 38);
             Runnable sendAction = () -> {
                 String text = popInput.getText().trim();
@@ -620,8 +644,11 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             popInput.addActionListener(e -> sendAction.run());
             popSend.addActionListener(e -> sendAction.run());
 
+            popRight.add(popAttach);
+            popRight.add(popSend);
+
             popBottom.add(popInput, BorderLayout.CENTER);
-            popBottom.add(popSend, BorderLayout.EAST);
+            popBottom.add(popRight, BorderLayout.EAST);
 
             frame.add(win.containerPanel, BorderLayout.CENTER);
             frame.add(popBottom, BorderLayout.SOUTH);
@@ -657,7 +684,109 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 4. HTML CHAT BUBBLE BUILDERS (WHATSAPP / SLACK STYLING)
+    // 4. FILE SHARING & ATTACHMENT LOGIC (PDF, PPT, WORD, IMAGES)
+    // =========================================================================
+    
+    private void selectAndSendFile() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Select File to Share (PDF, PPT, Word, Images, etc.)");
+        int res = chooser.showOpenDialog(this);
+        if (res == JFileChooser.APPROVE_OPTION) {
+            File selectedFile = chooser.getSelectedFile();
+            if (selectedFile == null || !selectedFile.exists()) return;
+
+            // 25MB check
+            if (selectedFile.length() > 25 * 1024 * 1024) {
+                JOptionPane.showMessageDialog(this, "File is too large! Maximum limit is 25 MB.", "File Size Limit", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            String targetName = (selectedTarget == null || selectedTarget.equals(GROUP_TARGET)) 
+                ? "Everyone (Group Broadcast)" 
+                : selectedTarget;
+
+            String confirmMsg = "Send file:\n" + selectedFile.getName() + " (" + formatFileSize(selectedFile.length()) + ")\nto: " + targetName + "?";
+            int confirm = JOptionPane.showConfirmDialog(this, confirmMsg, "Confirm File Transfer", JOptionPane.YES_NO_OPTION);
+            if (confirm != JOptionPane.YES_OPTION) return;
+
+            // Read bytes and send on background thread
+            new Thread(() -> {
+                try {
+                    byte[] data = Files.readAllBytes(selectedFile.toPath());
+                    if (selectedTarget == null || selectedTarget.equals(GROUP_TARGET)) {
+                        client.sendFileBroadcast(selectedFile.getName(), data);
+                    } else {
+                        client.sendFilePrivate(selectedTarget, selectedFile.getName(), data);
+                    }
+                } catch (Exception ex) {
+                    SwingUtilities.invokeLater(() -> {
+                        JOptionPane.showMessageDialog(ChatGUI.this, "Error reading file: " + ex.getMessage(), "Transfer Error", JOptionPane.ERROR_MESSAGE);
+                    });
+                }
+            }).start();
+        }
+    }
+
+    private File saveReceivedFile(String fileName, byte[] data) {
+        File dir = new File("downloads");
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        File dest = new File(dir, fileName);
+        int counter = 1;
+        String base = fileName;
+        String ext = "";
+        int dot = fileName.lastIndexOf('.');
+        if (dot > 0) {
+            base = fileName.substring(0, dot);
+            ext = fileName.substring(dot);
+        }
+        while (dest.exists()) {
+            dest = new File(dir, base + "_" + counter + ext);
+            counter++;
+        }
+        try {
+            Files.write(dest.toPath(), data);
+            return dest;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private void openDownloadsFolder() {
+        File dir = new File("downloads");
+        if (!dir.exists()) dir.mkdirs();
+        try {
+            if (Desktop.isDesktopSupported()) {
+                Desktop.getDesktop().open(dir);
+            } else {
+                JOptionPane.showMessageDialog(this, "Downloads folder: " + dir.getAbsolutePath());
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Downloads folder: " + dir.getAbsolutePath());
+        }
+    }
+
+    private String getFileIcon(String fileName) {
+        String lower = fileName.toLowerCase();
+        if (lower.endsWith(".pdf")) return "📕 PDF";
+        if (lower.endsWith(".ppt") || lower.endsWith(".pptx")) return "📊 PPT";
+        if (lower.endsWith(".doc") || lower.endsWith(".docx")) return "📘 DOC";
+        if (lower.endsWith(".xls") || lower.endsWith(".xlsx")) return "📗 XLS";
+        if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif")) return "🖼️ IMG";
+        if (lower.endsWith(".zip") || lower.endsWith(".rar")) return "📦 ZIP";
+        return "📁 FILE";
+    }
+
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+    }
+
+    // =========================================================================
+    // 5. HTML CHAT BUBBLE BUILDERS
     // =========================================================================
 
     private String escapeHtml(String text) {
@@ -669,9 +798,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                    .replace("\n", "<br>");
     }
 
-    /**
-     * Renders an incoming group broadcast bubble (Left-aligned, crisp white card).
-     */
     private String buildIncomingGroupBubble(String timestamp, String sender, String message) {
         return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
                "<tr><td align='left'>" +
@@ -683,9 +809,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                "</td></tr></table></td></tr></table>";
     }
 
-    /**
-     * Renders an outgoing broadcast bubble sent by You (Right-aligned, soft indigo bubble).
-     */
     private String buildOutgoingGroupBubble(String timestamp, String message) {
         return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
                "<tr><td align='right'>" +
@@ -697,9 +820,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                "</td></tr></table></td></tr></table>";
     }
 
-    /**
-     * Renders an incoming private 1-to-1 message (Left-aligned, luxury purple card).
-     */
     private String buildIncomingPrivateBubble(String timestamp, String sender, String message) {
         return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
                "<tr><td align='left'>" +
@@ -711,9 +831,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                "</td></tr></table></td></tr></table>";
     }
 
-    /**
-     * Renders an outgoing private 1-to-1 message (Right-aligned, soft teal bubble).
-     */
     private String buildOutgoingPrivateBubble(String timestamp, String message) {
         return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
                "<tr><td align='right'>" +
@@ -725,9 +842,48 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                "</td></tr></table></td></tr></table>";
     }
 
-    /**
-     * Renders a centered system notice chip.
-     */
+    private String buildIncomingFileBubble(String timestamp, String sender, String fileName, long size, boolean isPrivate) {
+        String icon = getFileIcon(fileName);
+        String sizeStr = formatFileSize(size);
+        String cardBg = isPrivate ? "#FAF5FF" : "#FFFFFF";
+        String border = isPrivate ? "#E9D5FF" : "#E2E8F0";
+        String tag = isPrivate ? "🔒 " + sender : sender;
+        String tagColor = isPrivate ? "#7C3AED" : "#2563EB";
+
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
+               "<tr><td align='left'>" +
+               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + ";'>" +
+               "<tr><td>" +
+               "<font face='Segoe UI' size='3' color='" + tagColor + "'><b>" + escapeHtml(tag) + "</b></font>" +
+               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
+               "<table cellpadding='6' cellspacing='0' border='0' style='background-color:#F8FAFC; border:1px solid #CBD5E1; margin-top:4px;'>" +
+               "<tr><td width='40' align='center'><font face='Segoe UI' size='2' color='#4F46E5'><b>" + icon + "</b></font></td>" +
+               "<td><font face='Segoe UI' size='3' color='#1E293B'><b>" + escapeHtml(fileName) + "</b></font><br>" +
+               "<font face='Segoe UI' size='2' color='#10B981'><b>" + sizeStr + "</b> • Saved to downloads/</font></td></tr></table>" +
+               "</td></tr></table></td></tr></table>";
+    }
+
+    private String buildOutgoingFileBubble(String timestamp, String fileName, long size, boolean isPrivate) {
+        String icon = getFileIcon(fileName);
+        String sizeStr = formatFileSize(size);
+        String cardBg = isPrivate ? "#F0FDF4" : "#EEF2FF";
+        String border = isPrivate ? "#BBF7D0" : "#C7D2FE";
+        String tag = isPrivate ? "🔒 You" : "You";
+        String tagColor = isPrivate ? "#0D9488" : "#4F46E5";
+
+        return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:8px;'>" +
+               "<tr><td align='right'>" +
+               "<table cellpadding='8' cellspacing='0' border='0' style='background-color:" + cardBg + "; border:1px solid " + border + ";'>" +
+               "<tr><td align='right'>" +
+               "<font face='Segoe UI' size='2' color='" + tagColor + "'><b>" + escapeHtml(tag) + "</b></font>" +
+               "<font face='Segoe UI' size='2' color='#94A3B8'>&nbsp;&nbsp;" + escapeHtml(timestamp) + "</font><br>" +
+               "<table cellpadding='6' cellspacing='0' border='0' style='background-color:#FFFFFF; border:1px solid " + border + "; margin-top:4px;'>" +
+               "<tr><td width='40' align='center'><font face='Segoe UI' size='2' color='#4F46E5'><b>" + icon + "</b></font></td>" +
+               "<td align='left'><font face='Segoe UI' size='3' color='#1E1B4B'><b>" + escapeHtml(fileName) + "</b></font><br>" +
+               "<font face='Segoe UI' size='2' color='#10B981'><b>" + sizeStr + "</b> • Sent</font></td></tr></table>" +
+               "</td></tr></table></td></tr></table>";
+    }
+
     private String buildSystemNotice(String text) {
         return "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:6px 0;'>" +
                "<tr><td align='center'>" +
@@ -735,9 +891,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
                "</td></tr></table>";
     }
 
-    /**
-     * Renders a historical message bubble loaded from MySQL.
-     */
     private String buildHistoryBubble(String timestamp, String sender, String message, boolean isMe) {
         String bgColor = isMe ? "#FEF3C7" : "#FFFBEB";
         String borderColor = isMe ? "#FDE68A" : "#FEF08A";
@@ -780,27 +933,6 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
             dispose();
             System.exit(0);
         }
-    }
-
-    /**
-     * Modal dialog presenting technical architecture to lab examiners.
-     */
-    private void showPresentationInfoDialog() {
-        String infoHtml = 
-            "<html><body style='width: 420px; font-family: Segoe UI, sans-serif; padding: 10px;'>" +
-            "<h2 style='color:#4F46E5; margin-bottom: 4px;'>Java Chat Application Architecture</h2>" +
-            "<p style='color:#64748B; margin-top: 0;'><b>Advanced Java Lab Presentation</b></p><hr>" +
-            "<p><b>1. Networking Tier:</b> Core <code>java.net.Socket</code> & <code>ServerSocket</code> over TCP (Port 12345).</p>" +
-            "<p><b>2. Concurrency Model:</b> Managed <code>ExecutorService</code> Thread Pool & <code>ConcurrentHashMap</code> session registry.</p>" +
-            "<p><b>3. User Interface:</b> Java Swing with <code>HTMLEditorKit</code> chat bubbles, <code>JTabbedPane</code>, & detached windows.</p>" +
-            "<p><b>4. Persistence Tier:</b> MySQL 8.0 via JDBC <code>PreparedStatement</code> (SQL-Injection protected).</p>" +
-            "<p><b>5. Security:</b> One-way <code>SHA-256</code> cryptographic password digest storage.</p>" +
-            "<hr>" +
-            "<p><b>Team Members:</b> Abhinav Batra, Amit Kumar, Anand Gaur, Abhishek Sihag<br>" +
-            "<b>ITS Coordinator / Guide:</b> Ms. Mona Nagar (Assistant Professor)</p>" +
-            "</body></html>";
-
-        JOptionPane.showMessageDialog(this, new JLabel(infoHtml), "Project Presentation Overview", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private static class ModernContactRenderer extends DefaultListCellRenderer {
@@ -858,7 +990,7 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // =========================================================================
-    // 5. CHAT EVENT LISTENER CALLBACKS (SWING EDT SAFE)
+    // 6. CHAT EVENT LISTENER CALLBACKS (SWING EDT SAFE)
     // =========================================================================
 
     @Override
@@ -945,6 +1077,45 @@ public class ChatGUI extends JFrame implements ChatClient.ChatEventListener {
         SwingUtilities.invokeLater(() -> {
             ConversationWindow win = getOrCreateConversation(recipient, recipient, false);
             win.appendHtmlRow(buildOutgoingPrivateBubble(timestamp, message));
+        });
+    }
+
+    // --- File Sharing Callbacks ---
+
+    @Override
+    public void onFileBroadcastReceived(String timestamp, String sender, String fileName, byte[] fileData) {
+        SwingUtilities.invokeLater(() -> {
+            saveReceivedFile(fileName, fileData);
+            ConversationWindow global = getOrCreateConversation(null, "Group Chat", false);
+            String me = client.getCurrentUsername();
+            if (me != null && sender.equalsIgnoreCase(me)) {
+                global.appendHtmlRow(buildOutgoingFileBubble(timestamp, fileName, fileData.length, false));
+            } else {
+                global.appendHtmlRow(buildIncomingFileBubble(timestamp, sender, fileName, fileData.length, false));
+            }
+        });
+    }
+
+    @Override
+    public void onFilePrivateReceived(String timestamp, String sender, String fileName, byte[] fileData) {
+        SwingUtilities.invokeLater(() -> {
+            saveReceivedFile(fileName, fileData);
+            ConversationWindow win = getOrCreateConversation(sender, sender, false);
+            win.appendHtmlRow(buildIncomingFileBubble(timestamp, sender, fileName, fileData.length, true));
+
+            int idx = tabbedPane.indexOfComponent(win.containerPanel);
+            if (idx != -1 && tabbedPane.getSelectedIndex() != idx) {
+                tabbedPane.setTitleAt(idx, "🔒 " + sender + " (●)");
+            }
+        });
+    }
+
+    @Override
+    public void onFilePrivateSent(String timestamp, String recipient, String fileName, byte[] fileData) {
+        SwingUtilities.invokeLater(() -> {
+            saveReceivedFile(fileName, fileData);
+            ConversationWindow win = getOrCreateConversation(recipient, recipient, false);
+            win.appendHtmlRow(buildOutgoingFileBubble(timestamp, fileName, fileData.length, true));
         });
     }
 
